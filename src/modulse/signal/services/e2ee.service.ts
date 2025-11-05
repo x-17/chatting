@@ -1,0 +1,310 @@
+// services/e2ee.service.ts
+
+import { KeyHelper, SignalProtocolAddress, SessionBuilder, SessionCipher } from '@privacyresearch/libsignal-protocol-typescript';
+import * as ed from '@noble/ed25519';
+import { fromBase64, toBase64 } from '../utils/e2ee.utils';
+import { IndexedDbSignalProtocolStore, type SessionStateInfo } from './signal.store';
+import type { StorableIdentity, PublicKeyBundle } from '../types';
+import { get as idbGet, set as idbSet, createStore } from 'idb-keyval';
+import { getKeyBundleForUser } from './users.api.ts'; // API函数
+// 临时切换到模拟API进行本地测试
+//import { getKeyBundleForUser } from './users.api.mock.ts';
+
+// 创建用于存储身份的 IndexedDB store
+const identityDbStore = createStore('e2ee-identity-store', 'identities');
+
+/**
+ * E2EE模块的主服务 -
+ */
+export const e2eeService = {
+    /**
+     * 检查指定用户的密钥是否已存在于IndexedDB中
+     * @param userId 用户的唯一ID
+     */
+    async keysExistForUser(userId: string): Promise<boolean> {
+        try {
+            const identity = await idbGet<StorableIdentity>(userId, identityDbStore);
+            return !!identity;
+        } catch (error) {
+            console.error(`[E2EE] Error checking keys for ${userId}:`, error);
+            return false;
+        }
+    },
+
+    /**
+     * 为用户生成所有密钥(通信+签名)，存入IndexedDB，并返回公钥部分。
+     * @param userId 用户的唯一ID
+     */
+    async initializeKeysForUser(userId: string): Promise<PublicKeyBundle> {
+        console.log(`[E2EE] 正在为用户 ${userId} 初始化密钥...`);
+
+        try {
+            // 1. 生成通信密钥
+            const identityKeyPair = await KeyHelper.generateIdentityKeyPair();
+            const signedPreKeyId = Date.now() * 1000 + Math.floor(10000 * Math.random());
+            const signedPreKey = await KeyHelper.generateSignedPreKey(identityKeyPair, signedPreKeyId);
+            const oneTimePreKeyId = Date.now() * 1000 + Math.floor(1000 * Math.random());
+            const oneTimePreKey = await KeyHelper.generatePreKey(oneTimePreKeyId);
+
+            // 2. 生成文件签名密钥
+            const signingPrivateKey = ed.utils.randomPrivateKey();
+            const signingPublicKey = ed.getPublicKey(signingPrivateKey);
+
+            // 3. 准备存储到IndexedDB
+            const storableIdentity: StorableIdentity = {
+                userId,
+                identityKeyPair: {
+                    pubKey: toBase64(identityKeyPair.pubKey),
+                    privKey: toBase64(identityKeyPair.privKey)
+                },
+                signedPreKey: {
+                    keyId: signedPreKeyId,
+                    pubKey: toBase64(signedPreKey.keyPair.pubKey),
+                    privKey: toBase64(signedPreKey.keyPair.privKey),
+                    signature: toBase64(signedPreKey.signature),
+                },
+                oneTimePreKeys: [{
+                    keyId: oneTimePreKey.keyId,
+                    pubKey: toBase64(oneTimePreKey.keyPair.pubKey),
+                    privKey: toBase64(oneTimePreKey.keyPair.privKey),
+                }],
+                signingKeyPair: {
+                    pubKey: toBase64(signingPublicKey),
+                    privKey: toBase64(signingPrivateKey),
+                },
+            };
+
+            // 4. 存入数据库
+            await idbSet(userId, storableIdentity, identityDbStore);
+
+            // 5. 返回公钥部分，用于上报给服务器
+            const publicKeyBundle: PublicKeyBundle = {
+                userId,
+                identityKey: storableIdentity.identityKeyPair.pubKey,
+                signedPreKey: {
+                    keyId: storableIdentity.signedPreKey.keyId,
+                    publicKey: storableIdentity.signedPreKey.pubKey,
+                    signature: storableIdentity.signedPreKey.signature,
+                },
+                preKey: {
+                    keyId: storableIdentity.oneTimePreKeys[0].keyId,
+                    publicKey: storableIdentity.oneTimePreKeys[0].pubKey,
+                },
+                signingPubKey: storableIdentity.signingKeyPair.pubKey
+            };
+
+            console.log(`[E2EE] 用户 ${userId} 密钥初始化完成`);
+            return publicKeyBundle;
+
+        } catch (error) {
+            console.error(`[E2EE] 用户 ${userId} 密钥初始化失败:`, error);
+            throw new Error(`Failed to initialize keys for ${userId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    },
+
+    /**
+     * 确保与接收者的加密会话已建立。
+     * 如果会话不存在，则从服务器获取其公钥束并建立新会话。
+     * @param myId 我自己的用户ID
+     * @param recipientId 接收者的用户ID
+     */
+    async ensureSession(myId: string, recipientId: string): Promise<void> {
+        console.log(`[E2EE] ${myId} 确保与 ${recipientId} 的会话...`);
+
+        const store = new IndexedDbSignalProtocolStore(myId);
+        const address = new SignalProtocolAddress(recipientId, 1);
+
+        try {
+            // 检查会话是否已存在
+            const session = await store.loadSession(address.toString());
+            if (session) {
+                console.log(`[E2EE] ${myId} 与 ${recipientId} 的会话已存在`);
+                return;
+            }
+
+            console.log(`[E2EE] ${myId} 与 ${recipientId} 的会话不存在，正在建立...`);
+
+            // 1. 从服务器获取接收者的公钥束
+            const recipientBundle = await getKeyBundleForUser(recipientId);
+            console.log(`[E2EE] 获取到 ${recipientId} 的公钥束`);
+
+            // 2. 使用 SessionBuilder 建立会话
+            const sessionBuilder = new SessionBuilder(store, address);
+
+            // 3. 处理公钥束，完成X3DH密钥交换
+            // @ts-ignore - libsignal的类型有时需要忽略
+            await sessionBuilder.processPreKey({
+                registrationId: 0,
+                identityKey: fromBase64(recipientBundle.identityKey).buffer,
+                signedPreKey: {
+                    keyId: recipientBundle.signedPreKey.keyId,
+                    publicKey: fromBase64(recipientBundle.signedPreKey.publicKey).buffer,
+                    signature: fromBase64(recipientBundle.signedPreKey.signature).buffer,
+                },
+                preKey: {
+                    keyId: recipientBundle.preKey.keyId,
+                    publicKey: fromBase64(recipientBundle.preKey.publicKey).buffer,
+                },
+            });
+
+            console.log(`[E2EE] ${myId} 与 ${recipientId} 的会话建立成功`);
+
+        } catch (error) {
+            console.error(`[E2EE] ${myId} 与 ${recipientId} 建立会话失败:`, error);
+            throw new Error(`Could not establish session: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    },
+
+    /**
+     * 加密一条消息
+     * @param myId 我自己的用户ID
+     * @param recipientId 接收者的用户ID
+     * @param message 明文消息
+     * @param onSessionUpdate 会话状态更新回调
+     */
+    async encryptMessage(
+        myId: string,
+        recipientId: string,
+        message: string,
+        onSessionUpdate?: (stateInfo: SessionStateInfo) => void
+    ): Promise<any> {
+        console.log(`[E2EE] ${myId} 正在为 ${recipientId} 加密消息`);
+
+        try {
+            const store = new IndexedDbSignalProtocolStore(myId, onSessionUpdate);
+            const address = new SignalProtocolAddress(recipientId, 1);
+            const cipher = new SessionCipher(store, address);
+
+            const ciphertext = await cipher.encrypt(new TextEncoder().encode(message).buffer);
+
+            console.log(`[E2EE] ${myId} 消息加密成功，类型: ${ciphertext.type}`);
+            return ciphertext;
+
+        } catch (error) {
+            console.error(`[E2EE] ${myId} 加密消息失败:`, error);
+            throw new Error(`Encryption failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    },
+
+    /**
+     * 解密一条消息
+     * @param myId 我自己的用户ID
+     * @param senderId 发送方的用户ID
+     * @param ciphertext 加密消息体
+     * @param onSessionUpdate 会话状态更新回调
+     */
+    async decryptMessage(
+        myId: string,
+        senderId: string,
+        ciphertext: any,
+        onSessionUpdate?: (stateInfo: SessionStateInfo) => void
+    ): Promise<string> {
+        console.log(`[E2EE] ${myId} 正在解密来自 ${senderId} 的消息，类型: ${ciphertext.type}`);
+
+        try {
+            const store = new IndexedDbSignalProtocolStore(myId, onSessionUpdate);
+            const address = new SignalProtocolAddress(senderId, 1);
+            const cipher = new SessionCipher(store, address);
+
+            let plaintextBuffer: ArrayBuffer;
+            if (ciphertext.type === 3) {
+                console.log(`[E2EE] 处理 PreKey 消息`);
+                plaintextBuffer = await cipher.decryptPreKeyWhisperMessage(ciphertext.body, 'binary');
+            } else {
+                console.log(`[E2EE] 处理常规消息`);
+                plaintextBuffer = await cipher.decryptWhisperMessage(ciphertext.body, 'binary');
+            }
+
+            const plaintext = new TextDecoder().decode(new Uint8Array(plaintextBuffer));
+            console.log(`[E2EE] ${myId} 解密成功`);
+            return plaintext;
+
+        } catch (error) {
+            console.error(`[E2EE] ${myId} 解密消息失败:`, error);
+            throw new Error(`Decryption failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    },
+
+    /**
+     * 对合同数据进行签名
+     * @param userId 当前用户的ID
+     * @param contractData 合同的二进制数据 (Uint8Array)
+     * @returns 签名的Base64字符串
+     */
+    async signContract(userId: string, contractData: Uint8Array): Promise<string> {
+        try {
+            const identity = await idbGet<StorableIdentity>(userId, identityDbStore);
+            if (!identity) {
+                throw new Error(`No keys found for user ${userId}`);
+            }
+
+            const privateKey = fromBase64(identity.signingKeyPair.privKey);
+            const signature = ed.sign(contractData, privateKey);
+
+            console.log(`[E2EE] ${userId} 签名完成`);
+            return toBase64(signature);
+
+        } catch (error) {
+            console.error(`[E2EE] ${userId} 签名失败:`, error);
+            throw new Error(`Signing failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    },
+
+    /**
+     * 验证合同签名
+     * @param signatureBase64 签名的Base64字符串
+     * @param contractData 合同的二进制数据 (Uint8Array)
+     * @param signerPubKeyBase64 签名者的公钥 (Base64)
+     * @returns boolean 是否验证通过
+     */
+    async verifyContractSignature(
+        signatureBase64: string,
+        contractData: Uint8Array,
+        signerPubKeyBase64: string
+    ): Promise<boolean> {
+        try {
+            const signature = fromBase64(signatureBase64);
+            const publicKey = fromBase64(signerPubKeyBase64);
+            const isValid = ed.verify(signature, contractData, publicKey);
+
+            console.log(`[E2EE] 签名验证结果: ${isValid ? '通过' : '失败'}`);
+            return isValid;
+
+        } catch (error) {
+            console.error(`[E2EE] 签名验证失败:`, error);
+            return false;
+        }
+    },
+
+    /**
+     * 获取用户的公钥信息
+     */
+    async getUserPublicKeys(userId: string): Promise<{ identityKey: string; signingPubKey: string } | null> {
+        try {
+            const identity = await idbGet<StorableIdentity>(userId, identityDbStore);
+            if (!identity) return null;
+
+            return {
+                identityKey: identity.identityKeyPair.pubKey,
+                signingPubKey: identity.signingKeyPair.pubKey
+            };
+        } catch (error) {
+            console.error(`[E2EE] 获取 ${userId} 公钥失败:`, error);
+            return null;
+        }
+    },
+
+    /**
+     * 清理用户的所有会话数据
+     */
+    async clearUserSessions(userId: string): Promise<void> {
+        try {
+            const store = new IndexedDbSignalProtocolStore(userId);
+            await store.clearAllSessions();
+            console.log(`[E2EE] ${userId} 的所有会话已清理`);
+        } catch (error) {
+            console.error(`[E2EE] 清理 ${userId} 会话失败:`, error);
+            throw error;
+        }
+    }
+};

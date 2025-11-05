@@ -1,0 +1,22 @@
+// modulse/auth/router/index.ts
+
+export const authRoutes = [
+    {
+        path: '/login',
+        name: 'Login',
+        component: () => import('../views/LoginPage.vue'),
+        meta: {
+            requiresAuth: false,
+            title: '登录'
+        },
+    },
+    {
+        path: '/auth/callback',
+        name: 'AuthCallback',
+        component: () => import('../views/AuthCallback.vue'),
+        meta: {
+            requiresAuth: false,
+            title: '登录中'
+        },
+    },
+];
