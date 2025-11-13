@@ -12,6 +12,7 @@ import axios from 'axios';
 import type { SessionStateInfo } from './signal.store';
 import type { P2PMessage, PersistedP2PMessage, OrderSessionInfo } from '../types/message.types';
 import type { EncryptedFilePackage } from '../../utils/file-encryption.service';
+import {isProtocolMessage} from "../types/message.types";
 
 export interface IP2PRouterResponse {
     success: boolean;
@@ -76,7 +77,7 @@ export class EnhancedP2PMessageRouter {
 
         try {
             // 1. 获取订单参与者信息
-            const orderInfo = await this.getOrderInfo(orderId);
+            const orderInfo = await this.getOrderInfo(orderId);//不用调接口，从自己取
             const recipientId = orderInfo.otherUserId;
 
             console.log(`[P2PRouter] Sending ${type} message for order ${orderId} to ${recipientId}`);
@@ -85,13 +86,18 @@ export class EnhancedP2PMessageRouter {
             await e2eeService.ensureSession(this.myUserId, recipientId);
 
             // 3. 加密消息
-            const encryptedData = await e2eeService.encryptMessage(
+            const encryptionResult = await e2eeService.encryptMessage(
                 this.myUserId,
                 recipientId,
                 content
             );
 
-            // 4. 构建消息对象
+            if (!encryptionResult.success) {
+                throw new Error(`加密失败: ${encryptionResult.error}`);
+            }
+
+            // 4. 构建消息对象 - 初始状态为 pending
+            const sequence = await this.generateSequenceForOrder(orderId);
             const message: P2PMessage = {
                 id: messageId,
                 type: type,
@@ -99,80 +105,124 @@ export class EnhancedP2PMessageRouter {
                 recipientId: recipientId,
                 orderId: orderId,
                 content: content,
-                encryptedContent: encryptedData,
-                timestamp: Date.now(),
-                status: 'pending'
+                encryptedContent: encryptionResult.ciphertext,
+                timestamp: Math.floor(Date.now()),
+                sequence: sequence,
+                status: 'pending', // ✅ 初始状态为 pending
+                sendAttempts: 0,
+                maxRetries: 3,
+                retryDelay: 1000,
+                deliveryConfirmed: false,
+                readConfirmed: false,
+                metadata: {
+                    firstSendTime: Date.now(),
+                    errorCount: 0
+                }
             };
 
-            // 5. 保存到本地
+            // 5. 保存到本地（状态为 pending）
             await this.persistence.saveMessage(message);
+
+            let sendSuccess = false;
+            let sendMethod = '';
 
             // 6. 发送消息（WebSocket优先）
             if (this.wsManager.isConnected()) {
-                const sent = this.wsManager.send({
-                    type: 'order_message',
-                    data: {
-                        id: messageId,
+                console.log(`[P2PRouter] Attempting to send via WebSocket`);
+
+                try {
+                    await this.wsManager.sendOrderMessage({
                         orderId: orderId,
-                        recipientId: recipientId,
-                        encryptedContent: JSON.stringify(encryptedData),
-                        messageType: type,
-                        timestamp: message.timestamp
-                    }
-                });
+                        encryptedContent: JSON.stringify(encryptionResult.ciphertext),
+                        messageType: message.type,
+                        timestamp: message.timestamp,
+                        sequence: sequence,
+                        fileId: undefined // 文本消息没有 fileId
+                    });
 
-                if (sent) {
-                    await this.persistence.updateMessageStatus(messageId, 'sent');
-                    console.log(`[P2PRouter] Order message sent via WebSocket`);
+                    sendSuccess = true;
+                    sendMethod = 'websocket';
+                    console.log(`[P2PRouter] WebSocket send successful`);
 
-                    return {
-                        success: true,
-                        data: {
-                            messageId,
-                            orderId,
-                            recipientId,
-                            method: 'websocket',
-                            status: 'sent'
-                        },
-                        metadata: { timing: Date.now() - startTime }
-                    };
+                } catch (error) {
+                    console.error(`[P2PRouter] WebSocket send failed:`, error);
                 }
             }
 
-            // 7. WebSocket不可用，使用HTTP API
-            console.log(`[P2PRouter] WebSocket unavailable, using HTTP API for order message`);
+            // 7. WebSocket不可用或发送失败，使用HTTP API
+            if (!sendSuccess) {
+                console.log(`[P2PRouter] WebSocket unavailable or failed, using HTTP API`);
 
-            const serverMessage: PersistedP2PMessage = {
-                id: messageId,
-                senderId: this.myUserId,
-                recipientId: recipientId,
-                orderId: orderId,
-                encryptedContent: JSON.stringify(encryptedData),
-                messageType: type,
-                timestamp: message.timestamp,
-                status: 'sent'
-            };
 
-            const result = await this.apiService.sendMessage(serverMessage);
-            await this.persistence.updateMessageStatus(messageId, 'sent');
+                const serverMessage: PersistedP2PMessage = {
+                    id: messageId,
+                    senderId: this.myUserId,
+                    recipientId: recipientId,
+                    orderId: orderId,
+                    encryptedContent: JSON.stringify(encryptionResult.ciphertext),
+                    messageType: type,
+                    timestamp: message.timestamp,
+                    sequence: sequence,
+                    status: 'pending',
+                    sendAttempts: 0,
+                    maxRetries: 3
+                };
 
-            console.log(`[P2PRouter] Order message sent via HTTP API`);
+                try {
+                    const apiResult = await this.apiService.sendMessage(serverMessage);
+                    if (apiResult.code === 1) {
+                        sendSuccess = true;
+                        sendMethod = 'http';
+                        console.log(`[P2PApi] Message sent successfully: ${apiResult.data?.id}`);
+                    }
+                } catch (apiError) {
+                    console.error(`[P2PRouter] HTTP API send failed:`, apiError);
+                    sendSuccess = false;
+                }
+            }
+
+            // 8. 根据发送结果更新状态
+            if (sendSuccess) {
+                // ✅ 乐观更新为 delivered (服务器保证投递)
+                await this.persistence.updateMessageStatus(messageId, 'delivered');
+
+                console.log(`[P2PRouter] Message sent and marked as delivered via ${sendMethod}`);
+            } else {
+                // 发送失败,更新为失败状态
+                await this.persistence.updateMessageRetryStatus(messageId, {
+                    status: 'failed',
+                    lastError: '发送失败:无法通过任何渠道发送消息',
+                    sendAttempts: 1
+                });
+
+                throw new Error('发送失败:无法通过任何渠道发送消息');
+            }
 
             return {
                 success: true,
                 data: {
-                    messageId: result.messageId,
+                    messageId,
                     orderId,
                     recipientId,
-                    method: 'http',
-                    status: 'sent',
-                    serverTimestamp: result.serverTimestamp
+                    method: sendMethod,
+                    status: 'delivered',  // ✅ 返回 delivered 状态
                 },
                 metadata: { timing: Date.now() - startTime }
             };
 
         } catch (error) {
             console.error(`[P2PRouter] Send order message failed:`, error);
+
+            // 确保在异常情况下也更新状态
+            try {
+                await this.persistence.updateMessageRetryStatus(messageId, {
+                    status: 'failed',
+                    lastError: error instanceof Error ? error.message : String(error),
+                    sendAttempts: 1
+                });
+            } catch (updateError) {
+                console.error(`[P2PRouter] Failed to update message status:`, updateError);
+            }
 
             return {
                 success: false,
@@ -183,15 +233,15 @@ export class EnhancedP2PMessageRouter {
     }
 
     /**
-     * 发送文件（基于订单）
+     * 发送文件（基于订单）- 改进的消息状态管理
      */
-    async sendFile(orderId: string, file: File): Promise<IP2PRouterResponse> {
+    async sendFile(orderId: string, file: File){
         const startTime = Date.now();
         const fileId = this.generateFileId();
 
         try {
             // 1. 获取订单参与者信息
-            const orderInfo = await this.getOrderInfo(orderId);
+            const orderInfo = await this.getOrderInfo(orderId);//还是直接从本地取
             const recipientId = orderInfo.otherUserId;
 
             console.log(`[P2PRouter] Sending file ${file.name} for order ${orderId} to ${recipientId}`);
@@ -210,116 +260,152 @@ export class EnhancedP2PMessageRouter {
             );
 
             // 4. 上传加密文件到服务器
-            const uploadUrl = await this.uploadFileToServer(
+            const backendFileId = await this.uploadEncryptedFileToServer(
                 encryptedPackage.encryptedContent,
-                fileId,
+                file.name, // 原始文件名
                 orderId,
+                fileId // 前端 fileId 用于进度跟踪
             );
 
-            // 5. 构建文件消息
+            // 5. 构建文件消息内容
             const fileMessageContent = JSON.stringify({
-                fileId: encryptedPackage.fileId,
+                fileId: backendFileId, // 使用后端返回的数字ID
+                frontendFileId: encryptedPackage.fileId, // 保留前端ID用于关联
                 fileName: file.name,
                 fileSize: file.size,
                 mimeType: file.type,
-                uploadUrl: uploadUrl,
                 metadata: encryptedPackage.metadata,
                 signature: encryptedPackage.signature
             });
 
             // 6. 加密文件消息
-            const encryptedData = await e2eeService.encryptMessage(
+            const encryptionResult = await e2eeService.encryptMessage(
                 this.myUserId,
                 recipientId,
                 fileMessageContent
             );
 
-            // 7. 构建消息对象
+            if (!encryptionResult.success) {
+                throw new Error(`文件消息加密失败: ${encryptionResult.error}`);
+            }
+
+            // 7. 构建消息对象 - 初始状态为 pending
+            const sequence = await this.generateSequenceForOrder(orderId);
+            const messageId = this.generateMessageId();
             const message: P2PMessage = {
-                id: this.generateMessageId(),
+                id: messageId,
                 type: 'file',
                 senderId: this.myUserId,
                 recipientId: recipientId,
                 orderId: orderId,
                 content: fileMessageContent,
-                encryptedContent: encryptedData,
-                timestamp: Date.now(),
-                status: 'pending',
+                encryptedContent: encryptionResult.ciphertext,
+                timestamp: Math.floor(Date.now()),
+                sequence: sequence,
+                status: 'pending', // ✅ 初始状态为 pending
+                sendAttempts: 0,
+                maxRetries: 3,
+                retryDelay: 1000,
+                deliveryConfirmed: false,
+                readConfirmed: false,
                 metadata: {
                     fileId: encryptedPackage.fileId,
                     fileName: file.name,
                     fileSize: file.size,
-                    mimeType: file.type
+                    mimeType: file.type,
+                    firstSendTime: Date.now(),
+                    errorCount: 0
                 }
             };
 
-            // 8. 保存到本地
+            // 8. 保存到本地（状态为 pending）
             await this.persistence.saveMessage(message);
+
+            let sendSuccess = false;
+            let sendMethod = '';
 
             // 9. 发送消息（WebSocket优先）
             if (this.wsManager.isConnected()) {
-                const sent = this.wsManager.send({
-                    type: 'order_message',
-                    data: {
-                        id: message.id,
+                console.log(`[P2PRouter] Attempting to send file via WebSocket`);
+
+                try {
+                    await this.wsManager.sendOrderMessage({
                         orderId: orderId,
-                        recipientId: recipientId,
-                        encryptedContent: JSON.stringify(encryptedData),
-                        messageType: 'file',
+                        encryptedContent: JSON.stringify(encryptionResult.ciphertext),
+                        messageType: message.type,
                         timestamp: message.timestamp,
-                        metadata: message.metadata
-                    }
-                });
+                        sequence: sequence,
+                        fileId: backendFileId
+                    });
 
-                if (sent) {
-                    await this.persistence.updateMessageStatus(message.id, 'sent');
-                    console.log(`[P2PRouter] Order file message sent via WebSocket`);
+                    // 如果没有抛出异常，说明发送成功
+                    sendSuccess = true;
+                    sendMethod = 'websocket';
+                    console.log(`[P2PRouter] WebSocket file send successful`);
 
-                    return {
-                        success: true,
-                        data: {
-                            messageId: message.id,
-                            orderId,
-                            fileId: encryptedPackage.fileId,
-                            recipientId,
-                            method: 'websocket',
-                            status: 'sent'
-                        },
-                        metadata: { timing: Date.now() - startTime }
-                    };
+                } catch (error) {
+                    console.error(`[P2PRouter] WebSocket file send failed:`, error);
+                    // 发送失败，继续尝试 HTTP
                 }
             }
 
-            // 10. WebSocket不可用，使用HTTP API
-            console.log(`[P2PRouter] WebSocket unavailable, using HTTP API for order file message`);
+            // 10. WebSocket不可用或发送失败，使用HTTP API
+            if (!sendSuccess) {
+                console.log(`[P2PRouter] WebSocket unavailable or failed, using HTTP API for file`);
 
-            const serverMessage: PersistedP2PMessage = {
-                id: message.id,
-                senderId: this.myUserId,
-                recipientId: recipientId,
-                orderId: orderId,
-                encryptedContent: JSON.stringify(encryptedData),
-                messageType: 'file',
-                timestamp: message.timestamp,
-                status: 'sent',
-                metadata: message.metadata
-            };
+                const serverMessage: PersistedP2PMessage = {
+                    id: messageId,
+                    senderId: this.myUserId,
+                    recipientId: recipientId,
+                    orderId: orderId,
+                    encryptedContent: JSON.stringify(encryptionResult.ciphertext),
+                    messageType: 'file',
+                    timestamp: message.timestamp,
+                    sequence: sequence,
+                    status: 'pending',
+                    sendAttempts: 0,
+                    maxRetries: 3,
+                    metadata: message.metadata
+                };
 
-            const result = await this.apiService.sendMessage(serverMessage);
-            await this.persistence.updateMessageStatus(message.id, 'sent');
+                try {
+                    const apiResult = await this.apiService.sendMessage(serverMessage);
+                    if (apiResult.code === 1) {
+                        sendSuccess = true;
+                        sendMethod = 'http';
+                        console.log(`[P2PApi] Message sent successfully: ${apiResult.data?.id}`);
+                    }
+                } catch (apiError) {
+                    console.error(`[P2PRouter] HTTP API file send failed:`, apiError);
+                    sendSuccess = false;
+                }
+            }
 
-            console.log(`[P2PRouter] Order file message sent via HTTP API`);
+            // 11. 根据发送结果更新状态
+            if (sendSuccess) {
+                // ✅ 乐观更新为 delivered
+                await this.persistence.updateMessageStatus(messageId, 'delivered');
+                console.log(`[P2PRouter] File message sent and marked as delivered via ${sendMethod}`);
+            } else {
+                // 发送失败，更新为失败状态
+                await this.persistence.updateMessageRetryStatus(messageId, {
+                    status: 'failed',
+                    lastError: '文件发送失败：无法通过任何渠道发送消息',
+                    sendAttempts: 1
+                });
+
+                throw new Error('文件发送失败：无法通过任何渠道发送消息');
+            }
 
             return {
                 success: true,
                 data: {
-                    messageId: result.messageId,
+                    messageId: messageId,
                     fileId: encryptedPackage.fileId,
                     orderId,
                     recipientId,
-                    method: 'http',
+                    method: sendMethod,
                     status: 'sent',
-                    serverTimestamp: result.serverTimestamp
                 },
                 metadata: { timing: Date.now() - startTime }
             };
@@ -334,6 +420,7 @@ export class EnhancedP2PMessageRouter {
             };
         }
     }
+
 
     /**
      * 下载订单文件
@@ -350,31 +437,36 @@ export class EnhancedP2PMessageRouter {
 
             // 1. 解析文件消息
             const fileMessageData = JSON.parse(message.content);
+            const backendFileId = fileMessageData.fileId; // 后端数字ID
+            const frontendFileId = fileMessageData.frontendFileId; // 前端ID用于进度
 
-            // 2. 下载加密文件内容
-            const progressCallback = this.downloadProgressCallbacks.get(fileMessageData.fileId);
+            // 2. 查询文件详情获取下载URL
+            const fileDetail = await this.getFileDetail(backendFileId);
+
+            // 3. 下载加密文件内容
+            const progressCallback = this.downloadProgressCallbacks.get(frontendFileId);
             const encryptedContent = await this.downloadFileFromServer(
-                fileMessageData.uploadUrl,
-                fileMessageData.fileId,
+                fileDetail.url,
+                frontendFileId,
                 progressCallback
             );
 
-            // 3. 重建加密包
+            // 4. 重建加密包
             const encryptedPackage: EncryptedFilePackage = {
-                fileId: fileMessageData.fileId,
-                metadata: fileMessageData.metadata,
+                fileId: frontendFileId, // 使用前端ID
+                metadata: fileMessageData.metadata, // 从消息中获取
                 encryptedContent: encryptedContent,
-                signature: fileMessageData.signature
+                signature: fileMessageData.signature // 从消息中获取
             };
 
-            // 4. 解密文件
+            // 5. 解密文件
             const decryptionResult = await fileEncryptionService.decryptP2PFile(
                 encryptedPackage,
                 this.myUserId,
                 message.senderId
             );
 
-            // 5. 创建本地下载链接
+            // 6. 创建本地下载链接
             const downloadUrl = fileEncryptionService.createDownloadUrl(
                 decryptionResult.content,
                 decryptionResult.originalName,
@@ -409,50 +501,66 @@ export class EnhancedP2PMessageRouter {
     }
 
     /**
-     * 接收并处理订单消息
+     * ✅ 统一处理接收到的消息（离线和在线消息统一处理）
      */
-    private async handleIncomingOrderMessage(data: any): Promise<void> {
+    private async handleIncomingMessage(data: any): Promise<void> {
         try {
-            console.log(`[P2PRouter] Handling incoming order message for order ${data.orderId}`);
+            console.log(`[P2PRouter] Handling message: type=${data.type}, id=${data.id}`);
 
+            // ✅ 协议消息不需要解密和持久化
+            if (isProtocolMessage(data.type)) {
+                console.log('[P2PRouter] Skipping protocol message');
+                return;
+            }
+
+            // 解析加密内容
             const encryptedData = JSON.parse(data.encryptedContent);
-            const plaintext = await e2eeService.decryptMessage(
+
+            // 解密消息
+            const decryptionResult = await e2eeService.decryptMessage(
                 this.myUserId,
-                data.senderId,
+                data.senderId.toString(),
                 encryptedData
             );
 
+            if (!decryptionResult.success || !decryptionResult.content) {
+                console.error(`[P2PRouter] Failed to decrypt message ${data.id}:`, decryptionResult.error);
+                return;
+            }
+
+            // 构建本地消息对象
             const message: P2PMessage = {
-                id: data.id,
-                type: data.messageType || 'text',
-                senderId: data.senderId,
+                id: data.id.toString(),
+                type: data.type,
+                senderId: data.senderId.toString(),
                 recipientId: this.myUserId,
                 orderId: data.orderId,
-                content: plaintext,
+                content: decryptionResult.content,
                 encryptedContent: encryptedData,
                 timestamp: data.timestamp,
-                serverTimestamp: data.serverTimestamp,
-                status: 'delivered',
-                metadata: data.metadata
+                sequence: data.sequence,
+                status: 'delivered',  // ✅ 收到即为已送达
+                sendAttempts: 0,
+                maxRetries: 0,
+                retryDelay: 0,
+                deliveryConfirmed: true,
+                readConfirmed: false,
+                metadata: {
+                    fileId: data.fileId,
+                    ...data.metadata
+                }
             };
 
             // 保存到本地
             await this.persistence.saveMessage(message);
 
-            // 更新服务器状态
-            try {
-                await this.apiService.updateMessageStatus(data.id, 'delivered');
-            } catch (error) {
-                console.warn('[P2PRouter] Failed to update delivery status:', error);
-            }
-
             // 触发消息处理器
             this.triggerMessageHandlers(message);
 
-            console.log(`[P2PRouter] Order message ${data.id} processed successfully`);
+            console.log(`[P2PRouter] Message ${data.id} processed successfully`);
 
         } catch (error) {
-            console.error('[P2PRouter] Handle incoming order message failed:', error);
+            console.error('[P2PRouter] Handle message failed:', error);
         }
     }
 
@@ -564,24 +672,47 @@ export class EnhancedP2PMessageRouter {
 
     // ========== 私有方法 ==========
 
+    /**
+     * ✅ 设置 WebSocket 处理器（简化版）
+     */
     private setupWebSocketHandlers(): void {
-        // 处理订单消息
+        // ✅ 统一处理所有业务消息（不区分离线/在线）
         this.wsManager.on('order_message', (data) => {
-            this.handleIncomingOrderMessage(data);
+            console.log('[P2PRouter] Processing message');
+            this.handleIncomingMessage(data);
         });
 
+        // 连接状态监控
         this.wsManager.onStatusChange((status) => {
             console.log(`[P2PRouter] Connection status: ${status}`);
             this.triggerStatusChange(status);
         });
     }
+    /**
+     * 处理在线列表更新
+     */
+    private handleOnlineListUpdate(onlineTenants: string[]): void {
+        console.log(`[P2PRouter] Online tenants updated:`, onlineTenants);
 
+        // 可以在这里更新UI显示在线状态
+        this.triggerStatusChange('online_list_updated');
+    }
+
+
+    /**
+     * ✅ 连接建立后自动同步
+     * 注意:由于后端会自动推送离线消息,这里可以简化
+     */
     private setupConnectionMonitor(): void {
         this.wsManager.onStatusChange(async (status) => {
             if (status === 'connected') {
-                console.log('[P2PRouter] Connected, syncing offline messages');
-                await this.syncOrderOfflineMessages();
+                console.log('[P2PRouter] Connected, backend will auto push offline messages');
+
+                // ✅ 只需要重试本地的待发送消息
                 await this.retryPendingOrderMessages();
+
+                // ✅ 可选:显式触发同步(如果后端没有自动推送)
+                // await this.syncOrderOfflineMessages();
             }
         });
     }
@@ -636,26 +767,117 @@ export class EnhancedP2PMessageRouter {
     }
 
     /**
+     * 更新消息的服务器时间戳
+     */
+    // private async updateMessageServerTimestamp(messageId: string, serverTimestamp: number): Promise<void> {
+    //     try {
+    //         // 这里需要扩展 MessagePersistenceService 来支持按ID获取消息
+    //         // 暂时跳过具体实现，可以在后续版本中添加
+    //         console.log(`[P2PRouter] Would update server timestamp for ${messageId}: ${serverTimestamp}`);
+    //     } catch (error) {
+    //         console.warn(`[P2PRouter] Failed to update server timestamp:`, error);
+    //     }
+    // }
+
+    /**
      * 上传文件到服务器
      */
-    private async uploadFileToServer(content: ArrayBuffer, fileId: string, orderId: string): Promise<string> {
-        const progressCallback = this.uploadProgressCallbacks.get(fileId);
+    // private async uploadFileToServer(content: ArrayBuffer, fileId: string, orderId: string): Promise<string> {
+    //     const progressCallback = this.uploadProgressCallbacks.get(fileId);
+    //
+    //     try {
+    //         const formData = new FormData();
+    //         formData.append('file', new Blob([content]), `${fileId}.encrypted`);
+    //         formData.append('fileId', fileId);
+    //         formData.append('orderId', orderId);
+    //         formData.append('userId', this.myUserId);
+    //
+    //         console.log(`[P2PRouter] Uploading file to server: ${fileId}`);
+    //
+    //         const response = await this.fileApiClient.post<{
+    //             success: boolean;
+    //             downloadUrl: string;
+    //             fileId: string;
+    //             orderId: string;
+    //         }>('/api/files/upload', formData, {
+    //             headers: {
+    //                 'Content-Type': 'multipart/form-data'
+    //             },
+    //             onUploadProgress: (progressEvent) => {
+    //                 if (progressEvent.total && progressCallback) {
+    //                     const percentCompleted = Math.round(
+    //                         (progressEvent.loaded * 100) / progressEvent.total
+    //                     );
+    //
+    //                     progressCallback({
+    //                         fileId,
+    //                         orderId,
+    //                         loaded: progressEvent.loaded,
+    //                         total: progressEvent.total,
+    //                         percent: percentCompleted,
+    //                         stage: 'uploading'
+    //                     });
+    //
+    //                     console.log(`[P2PRouter] Upload progress: ${percentCompleted}%`);
+    //                 }
+    //             },
+    //             timeout: 300000
+    //         });
+    //
+    //         if (!response.data.success) {
+    //             throw new Error('Upload failed: Server returned unsuccessful response');
+    //         }
+    //
+    //         console.log(`[P2PRouter] Upload success: ${response.data.downloadUrl}`);
+    //         return response.data.downloadUrl;
+    //
+    //     } catch (error) {
+    //         console.error('[P2PRouter] Upload error:', error);
+    //
+    //         if (axios.isAxiosError(error)) {
+    //             if (error.code === 'ECONNABORTED') {
+    //                 throw new Error('文件上传超时，请检查网络连接后重试');
+    //             } else if (error.response?.status === 413) {
+    //                 throw new Error('文件过大，超出服务器限制');
+    //             } else if (error.response?.status === 401) {
+    //                 throw new Error('身份验证失败，请重新登录');
+    //             } else if (error.response?.status === 500) {
+    //                 throw new Error('服务器错误，请稍后重试');
+    //             }
+    //         }
+    //
+    //         throw new Error('文件上传失败: ' + (error instanceof Error ? error.message : String(error)));
+    //     }
+    // }
+
+    private async uploadEncryptedFileToServer(
+        encryptedContent: ArrayBuffer,
+        originalFileName: string,
+        orderId: string,
+        frontendFileId: string
+    ): Promise<number> {
+        const progressCallback = this.uploadProgressCallbacks.get(frontendFileId);
 
         try {
             const formData = new FormData();
-            formData.append('file', new Blob([content]), `${fileId}.encrypted`);
-            formData.append('fileId', fileId);
-            formData.append('orderId', orderId);
-            formData.append('userId', this.myUserId);
 
-            console.log(`[P2PRouter] Uploading file to server: ${fileId}`);
+            // 创建加密文件的 Blob，保持 .encrypted 扩展名
+            const encryptedBlob = new Blob([encryptedContent], {
+                type: 'application/octet-stream'
+            });
+
+            // 使用原始文件名 + .encrypted 作为上传文件名
+            const uploadFileName = `${originalFileName}.encrypted`;
+            formData.append('file', encryptedBlob, uploadFileName);
+            formData.append('orderId', orderId);
+
+            console.log(`[P2PRouter] Uploading encrypted file to server: ${uploadFileName}`);
 
             const response = await this.fileApiClient.post<{
-                success: boolean;
-                downloadUrl: string;
-                fileId: string;
-                orderId: string;
-            }>('/api/files/upload', formData, {
+                code: number;
+                msg: string;
+                data: number; // 后端返回的数字 fileId
+            }>('/file/upload', formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data'
                 },
@@ -666,44 +888,55 @@ export class EnhancedP2PMessageRouter {
                         );
 
                         progressCallback({
-                            fileId,
+                            fileId: frontendFileId,
                             orderId,
                             loaded: progressEvent.loaded,
                             total: progressEvent.total,
                             percent: percentCompleted,
                             stage: 'uploading'
                         });
-
-                        console.log(`[P2PRouter] Upload progress: ${percentCompleted}%`);
                     }
                 },
                 timeout: 300000
             });
 
-            if (!response.data.success) {
-                throw new Error('Upload failed: Server returned unsuccessful response');
+            if (response.data.code !== 1) {
+                throw new Error(`上传失败: ${response.data.msg}`);
             }
 
-            console.log(`[P2PRouter] Upload success: ${response.data.downloadUrl}`);
-            return response.data.downloadUrl;
+            console.log(`[P2PRouter] Upload success, backend fileId: ${response.data.data}`);
+            return response.data.data;
 
         } catch (error) {
-            console.error('[P2PRouter] Upload error:', error);
-
-            if (axios.isAxiosError(error)) {
-                if (error.code === 'ECONNABORTED') {
-                    throw new Error('文件上传超时，请检查网络连接后重试');
-                } else if (error.response?.status === 413) {
-                    throw new Error('文件过大，超出服务器限制');
-                } else if (error.response?.status === 401) {
-                    throw new Error('身份验证失败，请重新登录');
-                } else if (error.response?.status === 500) {
-                    throw new Error('服务器错误，请稍后重试');
-                }
-            }
-
+            // 错误处理保持不变
             throw new Error('文件上传失败: ' + (error instanceof Error ? error.message : String(error)));
         }
+    }
+
+    private async getFileDetail(fileId: number): Promise<{
+        id: number;
+        url: string;
+        fileName: string;
+        fileType: number;
+        checksum: string;
+    }> {
+        const response = await this.fileApiClient.get<{
+            code: number;
+            msg: string;
+            data: {
+                id: number;
+                url: string;
+                fileName: string;
+                fileType: number;
+                checksum: string;
+            }
+        }>(`/file/${fileId}`);
+
+        if (response.data.code !== 1) {
+            throw new Error(`获取文件详情失败: ${response.data.msg}`);
+        }
+
+        return response.data.data;
     }
 
     /**
@@ -760,6 +993,23 @@ export class EnhancedP2PMessageRouter {
 
     private generateFileId(): string {
         return `file_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    }
+
+    private async generateSequenceForOrder(orderId: string): Promise<number> {
+        try {
+            // 从本地存储获取最新消息来确定下一个序列号
+            const latestMessages = await this.persistence.getOrderMessages(orderId, 1);
+            if (latestMessages.length === 0) {
+                return 1; // 第一条消息
+            }
+
+            const latestSequence = Math.max(...latestMessages.map(msg => msg.sequence || 0));
+            return latestSequence + 1;
+
+        } catch (error) {
+            console.error(`[P2PRouter] Generate sequence for order ${orderId} error:`, error);
+            return Date.now(); // 降级方案
+        }
     }
 }
 

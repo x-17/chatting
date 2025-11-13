@@ -1,16 +1,20 @@
 <template>
-  <div></div>
+  <div />
 </template>
 
 <script setup lang="ts">
 import { onMounted, watch, ref, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElLoading, ElMessage } from "element-plus";
+import { OrderApiService } from "../../orders/services/order-api.service";
 import { useAuthStore } from "../services/auth.store";
 
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
+
+// 订单 API
+const orderApi = new OrderApiService();
 
 // 存储ElLoading实例以便手动关闭
 const loadingInstance = ref<any>(null);
@@ -41,7 +45,6 @@ onMounted(() => {
     return;
   }
 
-  // TODO: 验证 state 与 sessionStorage 中存储的是否一致
   const savedState = sessionStorage.getItem("sso_state");
   if (state !== savedState) {
     ElMessage.error("安全验证失败(state mismatch)，请重新尝试。");
@@ -59,7 +62,7 @@ onMounted(() => {
 // 监听Pinia Store中的状态变化来控制UI
 watch(
   () => authStore.status,
-  (newStatus, oldStatus) => {
+  (newStatus, _oldStatus) => {
     // 当状态变为加载或设置时，显示Loading
     if (
       (newStatus === "loading" || newStatus === "settingUp") &&
@@ -85,12 +88,32 @@ watch(
       if (loadingInstance.value) loadingInstance.value.close();
       ElMessage.success("欢迎回来！即将进入洽谈室。");
 
-      // TODO: 从sessionStorage或Pinia中获取之前保存的上下文，如orderId
-      const targetPath =
-        sessionStorage.getItem("redirect_context_orderId") || "/";
-      sessionStorage.removeItem("redirect_context_orderId");
+      // 从sessionStorage或Pinia中获取之前保存的上下文，如跳转目标和可能的 orderId
+      const orderId = sessionStorage.getItem("redirect_context_orderId");
 
-      router.replace(targetPath); // 使用replace避免用户回退到callback页面
+      const bssOrderId = orderId ? Number(orderId) : 0;
+      if (!bssOrderId) {
+        ElMessage.error("订单注册失败:无效的订单ID");
+        router.replace("/login-failed"); //跳转到统一错误页面
+        return;
+      }
+      (async () => {
+        const creating = ElLoading.service({
+          lock: true,
+          text: "正在创建订单，请稍候...",
+        });
+        try {
+          const msg = await orderApi.createOrder(bssOrderId);
+          ElMessage.success(msg || "订单创建成功");
+          sessionStorage.removeItem("redirect_context_orderId");
+          router.replace("/");
+        } catch (err: any) {
+          ElMessage.error("订单创建失败：" + (err?.message || "未知错误"));
+          router.replace("/login-failed"); //跳转到统一错误页面
+        } finally {
+          creating.close();
+        }
+      })();
     }
 
     // 当流程失败时

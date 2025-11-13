@@ -19,13 +19,14 @@ interface AuthState {
     currentUserId: string | null;
     users: Map<string, UserSession>;
     openId: string | null;
+    tenantId:string | null;
     status: AuthStatus;
     errorMessage: string;
     isProcessing: boolean;
 }
 
 const CONFIG = {
-    SESSION_TIMEOUT: 30 * 60 * 1000,
+    SESSION_TIMEOUT: 60 * 60 * 1000,
     TOKEN_EXPIRY_WARNING: 60 * 60 * 1000,
     MAX_RETRY_ATTEMPTS: 3,
     REQUEST_TIMEOUT: 15000,
@@ -36,6 +37,7 @@ export const useAuthStore = defineStore('auth', {
         currentUserId: null,
         users: new Map(),
         openId: null,
+        tenantId:null,
         status: 'idle',
         errorMessage: '',
         isProcessing: false,
@@ -51,6 +53,7 @@ export const useAuthStore = defineStore('auth', {
             if (!state.currentUserId) return null;
             return state.users.get(state.currentUserId)?.token || null;
         },
+
         isAuthenticated: (state): boolean => {
             return !!state.currentUserId &&
                 !!state.users.get(state.currentUserId) &&
@@ -250,8 +253,9 @@ export const useAuthStore = defineStore('auth', {
                     return this.handleExistingUser(response.data);
                 }
 
-                if (response.code === 0 && response.data?.openId) {
-                    return await this.handleNewUser(response.data);
+                if (response.code === 0 && response.msg?.tenantId) {
+
+                    return await this.handleNewUser(response.msg);
                 }
 
                 throw new Error(response.msg || '未知的认证响应');
@@ -267,7 +271,7 @@ export const useAuthStore = defineStore('auth', {
          * ✅ 处理已存在用户
          */
         handleExistingUser(data: any): boolean {
-            const userId = data.userInfo.id;
+            const userId = String(data.userInfo.tenantId);
             const session: UserSession = {
                 user: data.userInfo,
                 token: data.token,
@@ -294,17 +298,23 @@ export const useAuthStore = defineStore('auth', {
 
         async handleNewUser(data: any): Promise<boolean> {
             this.status = 'settingUp';
-            this.openId = data.openId;
-
+            this.tenantId = String(data.tenantId);
             try {
                 const publicKeys = await this.retryOperation(
-                    () => e2eeService.initializeKeysForUser(this.openId!),
+                    () => e2eeService.initializeKeysForUser(this.tenantId!),
                     CONFIG.MAX_RETRY_ATTEMPTS,
                     '密钥生成失败，正在重试...'
                 );
 
+                const userInfo = {
+                    id: String(data.tenantId),
+                    openId: String(data.openId),
+                    userName: String(data.username),
+                    tenantId: data.tenantId
+                };
+
                 const registerRes = await this.withTimeout(
-                    authApi.registerUserKeys(publicKeys),
+                    authApi.registerUserKeys(publicKeys,userInfo),
                     CONFIG.REQUEST_TIMEOUT
                 );
 

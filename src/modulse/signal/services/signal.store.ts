@@ -20,23 +20,20 @@ export interface SessionStateInfo {
         userId: string;
         recipientId: string;
     };
-    // 新增：棘轮状态信息
-    ratchetInfo?: {
-        operation: 'encrypt' | 'decrypt' | 'init';
-        messageCount: number;
-        sessionAge: number; // 会话存在时间（分钟）
-        isDoubleRatchetAdvanced: boolean; // 是否推进了双棘轮
-    };
 }
 
 /**
  * 满足 libsignal-protocol-typescript 所需 StorageType 接口的 IndexedDB 实现
- * 增强了会话状态观察功能,邱老师要求看协议状态，具体使用如果UI界面丰富可以考虑不使用
  */
 export class IndexedDbSignalProtocolStore implements StorageType {
     private _userId: string;
     private _onSessionUpdate?: (stateInfo: SessionStateInfo) => void;
-    private _sessionMetadata = new Map<string, { recipientId: string; createdAt: number; messageCount: number }>();
+    private _sessionMetadata = new Map<string, {
+        recipientId: string;
+        createdAt: number;
+        messageCount: number;
+        lastAccessed: number;
+    }>();
 
     constructor(
         userId: string,
@@ -69,13 +66,35 @@ export class IndexedDbSignalProtocolStore implements StorageType {
         }
     }
 
-    private _parseSessionIdentifier(identifier: string): { userId: string; recipientId: string } {
-        // Signal Protocol 的标识符格式通常是 "recipientId.deviceId"
-        const parts = identifier.split('.');
-        return {
-            userId: this._userId,
-            recipientId: parts[0] || 'unknown'
-        };
+    /**
+     * 解析会话标识符
+     * 格式：recipientId.deviceId (不考虑多设备，deviceId固定为1)
+     */
+    private _parseSessionIdentifier(identifier: string): {
+        userId: string;
+        recipientId: string;
+        deviceId: number;
+        isValid: boolean;
+    } {
+        // Signal 协议标准格式：recipientId.deviceId
+        const match = identifier.match(/^([^\.]+)\.(\d+)$/);
+
+        if (match) {
+            return {
+                userId: this._userId,
+                recipientId: match[1],
+                deviceId: parseInt(match[2], 10),
+                isValid: true
+            };
+        } else {
+            console.warn(`[Store] Invalid session identifier format: ${identifier}`);
+            return {
+                userId: this._userId,
+                recipientId: identifier,
+                deviceId: 1,
+                isValid: false
+            };
+        }
     }
 
     private async _getIdentity(): Promise<StorableIdentity | undefined> {
@@ -98,15 +117,18 @@ export class IndexedDbSignalProtocolStore implements StorageType {
     }
 
     async getLocalRegistrationId(): Promise<number> {
-        return 0; // 默认值
+        return 1;
     }
 
     async saveIdentity(encodedAddress: string, publicKey: ArrayBuffer): Promise<boolean> {
         const existing = await get<string>(`identity-${encodedAddress}`, trustStore);
         const pubKeyB64 = toBase64(new Uint8Array(publicKey));
+
         if (existing && existing !== pubKeyB64) {
-            return false; // 不信任的新身份（TOFU）
+            console.warn(`[Store] Identity changed for ${encodedAddress}`);
+            return false;
         }
+
         await set(`identity-${encodedAddress}`, pubKeyB64, trustStore);
         return true;
     }
@@ -117,11 +139,13 @@ export class IndexedDbSignalProtocolStore implements StorageType {
     ): Promise<boolean> {
         const known = await get<string>(`identity-${encodedAddress}`, trustStore);
         const current = toBase64(new Uint8Array(identityKey));
+
         if (!known) {
-            // 第一次遇到，记录为信任，存在一定安全问题，有特定需求再修改。
+            console.warn(`[Store] First encounter with identity: ${encodedAddress}`);
             await set(`identity-${encodedAddress}`, current, trustStore);
             return true;
         }
+
         return known === current;
     }
 
@@ -153,9 +177,9 @@ export class IndexedDbSignalProtocolStore implements StorageType {
         await this._setIdentity(identity);
     }
 
-    //为了简化PreKeys密钥管理，建立会话不对PreKey进行删除。
+    //不删除PreKey
     async removePreKey(keyId: number): Promise<void> {
-        console.log(`[Store] PreKey ${keyId} removal requested but ignored in experiment mode`);
+        console.log(`[Store] PreKey ${keyId} removal requested but ignored (no key rotation)`);
         return Promise.resolve();
     }
 
@@ -209,6 +233,15 @@ export class IndexedDbSignalProtocolStore implements StorageType {
 
     async loadSession(identifier: string): Promise<string | undefined> {
         console.log(`[Store] 尝试加载会话: ${identifier}`);
+
+        // 更新会话访问时间
+        const metadata = this._sessionMetadata.get(identifier);
+        if (metadata) {
+            metadata.lastAccessed = Date.now();
+            this._sessionMetadata.set(identifier, metadata);
+            await this._saveSessionMetadata();
+        }
+
         const session = await get<string>(identifier, sessionStore);
         if (session) {
             console.log(`[Store] 找到现有会话: ${identifier}`);
@@ -221,8 +254,12 @@ export class IndexedDbSignalProtocolStore implements StorageType {
     async storeSession(identifier: string, record: string): Promise<void> {
         console.log(`[Store] 存储会话: ${identifier}`);
 
+        const { recipientId, isValid } = this._parseSessionIdentifier(identifier);
+        if (!isValid) {
+            console.warn(`[Store] Storing session with invalid identifier: ${identifier}`);
+        }
+
         // 更新会话元数据
-        const { recipientId } = this._parseSessionIdentifier(identifier);
         const existingSession = await get<string>(identifier, sessionStore);
         const isNew = !existingSession;
 
@@ -231,40 +268,29 @@ export class IndexedDbSignalProtocolStore implements StorageType {
             metadata = {
                 recipientId,
                 createdAt: Date.now(),
-                messageCount: 0
+                messageCount: 0,
+                lastAccessed: Date.now()
             };
+        } else {
+            metadata.lastAccessed = Date.now();
+            metadata.messageCount++; // 递增消息计数
         }
 
-        const oldMessageCount = metadata.messageCount;
-        metadata.messageCount++;
         this._sessionMetadata.set(identifier, metadata);
-
-        // 保存元数据
         await this._saveSessionMetadata();
 
-        // 计算会话年龄
-        const sessionAgeMinutes = Math.floor((Date.now() - metadata.createdAt) / (1000 * 60));
-
-        // 判断是否推进了双棘轮（简化判断：消息计数增加表示棘轮转动）
-        const isDoubleRatchetAdvanced = metadata.messageCount > oldMessageCount;
-
-        // 调用回调函数，提供详细的会话状态信息
+        // 调用回调函数，提供简化的会话状态信息
         if (this._onSessionUpdate) {
             const stateInfo: SessionStateInfo = {
                 identifier,
                 timestamp: Date.now(),
                 isNew,
-                hasPreKeyMessage: isNew, // 新会话通常意味着 PreKey 消息
+                hasPreKeyMessage: isNew,
                 metadata: {
                     userId: this._userId,
                     recipientId
-                },
-                ratchetInfo: {
-                    operation: isNew ? 'init' : (this._userId < recipientId ? 'encrypt' : 'decrypt'),
-                    messageCount: metadata.messageCount,
-                    sessionAge: sessionAgeMinutes,
-                    isDoubleRatchetAdvanced
                 }
+                // ❌ 删除棘轮状态信息
             };
 
             try {
@@ -273,6 +299,9 @@ export class IndexedDbSignalProtocolStore implements StorageType {
                 console.error('[Store] Session update callback failed:', error);
             }
         }
+
+        // 定期清理过期会话
+        await this._cleanupExpiredSessions();
 
         // 存储实际的会话记录
         return set(identifier, record, sessionStore);
@@ -285,15 +314,64 @@ export class IndexedDbSignalProtocolStore implements StorageType {
         await set(identifier, undefined, sessionStore);
     }
 
+    /**
+     * 清理过期会话（30天未访问）
+     */
+    private async _cleanupExpiredSessions(): Promise<void> {
+        const SESSION_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30天
+        const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 每天执行一次
+
+        const lastCleanup = localStorage.getItem(`lastCleanup_${this._userId}`);
+        const now = Date.now();
+
+        if (lastCleanup && (now - parseInt(lastCleanup)) < CLEANUP_INTERVAL) {
+            return;
+        }
+
+        try {
+            let cleanedCount = 0;
+            const expiredSessions: string[] = [];
+
+            for (const [identifier, metadata] of this._sessionMetadata.entries()) {
+                if (now - metadata.lastAccessed > SESSION_MAX_AGE) {
+                    expiredSessions.push(identifier);
+                }
+            }
+
+            for (const identifier of expiredSessions) {
+                await this.removeSession(identifier);
+                cleanedCount++;
+            }
+
+            if (cleanedCount > 0) {
+                console.log(`[Store] Cleaned up ${cleanedCount} expired sessions`);
+            }
+
+            localStorage.setItem(`lastCleanup_${this._userId}`, now.toString());
+
+        } catch (error) {
+            console.warn('[Store] Session cleanup error:', error);
+        }
+    }
+
     // ===================== 额外的工具方法 =====================
 
     /**
      * 获取会话统计信息
      */
-    getSessionStats(): { identifier: string; recipientId: string; createdAt: number; messageCount: number }[] {
+    getSessionStats(): {
+        identifier: string;
+        recipientId: string;
+        createdAt: number;
+        messageCount: number;
+        lastAccessed: number;
+        ageMinutes: number;
+    }[] {
+        const now = Date.now();
         return Array.from(this._sessionMetadata.entries()).map(([identifier, metadata]) => ({
             identifier,
-            ...metadata
+            ...metadata,
+            ageMinutes: Math.floor((now - metadata.createdAt) / (1000 * 60))
         }));
     }
 
@@ -304,8 +382,12 @@ export class IndexedDbSignalProtocolStore implements StorageType {
         console.log(`[Store] 清理用户 ${this._userId} 的所有会话`);
         this._sessionMetadata.clear();
         await this._saveSessionMetadata();
+    }
 
-        // 注意：这里不能直接清理整个 sessionStore，因为可能有其他用户的会话
-        // 实际应用中需要更精确的清理逻辑
+    /**
+     * 安全地移除会话更新回调
+     */
+    removeSessionUpdateCallback(): void {
+        this._onSessionUpdate = undefined;
     }
 }

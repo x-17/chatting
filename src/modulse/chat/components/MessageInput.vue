@@ -8,9 +8,9 @@
       </el-button>
 
       <el-upload
-          :show-file-list="false"
-          :before-upload="handleFileSelect"
-          accept="*/*"
+        :show-file-list="false"
+        :before-upload="handleFileSelect"
+        accept="*/*"
       >
         <el-button text>
           <el-icon><Paperclip /></el-icon>
@@ -18,12 +18,21 @@
       </el-upload>
 
       <el-upload
-          :show-file-list="false"
-          :before-upload="handleFileSelect"
-          accept="image/*"
+        :show-file-list="false"
+        :before-upload="handleFileSelect"
+        accept="image/*"
       >
         <el-button text>
           <el-icon><Picture /></el-icon>
+        </el-button>
+      </el-upload>
+      <el-upload
+        :show-file-list="false"
+        :before-upload="handleContractSelect"
+        accept="*/*"
+      >
+        <el-button text>
+          <el-icon><Document /></el-icon>
         </el-button>
       </el-upload>
 
@@ -46,14 +55,14 @@
     <!-- 输入区域 -->
     <div class="input-area">
       <el-input
-          ref="inputRef"
-          v-model="messageText"
-          type="textarea"
-          :rows="3"
-          :disabled="disabled"
-          placeholder="输入消息... (Ctrl+Enter 发送)"
-          resize="none"
-          @keydown="handleKeydown"
+        ref="inputRef"
+        v-model="messageText"
+        type="textarea"
+        :rows="3"
+        :disabled="disabled"
+        placeholder="输入消息... (Ctrl+Enter 发送)"
+        resize="none"
+        @keydown="handleKeydown"
       />
     </div>
 
@@ -67,10 +76,10 @@
       <div class="footer-right">
         <el-button @click="handleClear">清空</el-button>
         <el-button
-            type="primary"
-            :disabled="!canSend"
-            :loading="sending"
-            @click="handleSend"
+          type="primary"
+          :disabled="!canSend"
+          :loading="sending"
+          @click="handleSend"
         >
           发送
         </el-button>
@@ -80,15 +89,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ref, computed } from "vue";
+import { ElMessage } from "element-plus";
 import {
   ChatDotRound,
   Paperclip,
   Picture,
-  Lightning
-} from '@element-plus/icons-vue';
-import type { Order } from '../types/chat.types';
+  Lightning,
+  Document,
+} from "@element-plus/icons-vue";
+import type { Order } from "../types/chat.types";
 
 interface Props {
   order: Order;
@@ -96,23 +106,24 @@ interface Props {
 }
 
 interface Emits {
-  (e: 'send', content: string): void;
-  (e: 'send-file', file: File): void;
+  (e: "send", content: string): void;
+  (e: "send-file", file: File): void;
+  (e: "send-contract", file: File): void;
 }
 
 const props = defineProps<Props>();
 const emit = defineEmits<Emits>();
 
 const inputRef = ref();
-const messageText = ref('');
+const messageText = ref("");
 const sending = ref(false);
 
-const canSend = computed(() =>
-    messageText.value.trim().length > 0 && !props.disabled
+const canSend = computed(
+  () => messageText.value.trim().length > 0 && !props.disabled
 );
 
 function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && e.ctrlKey) {
+  if (e.key === "Enter" && e.ctrlKey) {
     e.preventDefault();
     handleSend();
   }
@@ -125,12 +136,11 @@ async function handleSend() {
 
   try {
     sending.value = true;
-    emit('send', content);
-    messageText.value = '';
+    emit("send", content);
+    messageText.value = "";
 
     // 聚焦输入框
     inputRef.value?.focus();
-
   } catch (error) {
     // 错误由父组件处理
   } finally {
@@ -139,7 +149,7 @@ async function handleSend() {
 }
 
 function handleClear() {
-  messageText.value = '';
+  messageText.value = "";
   inputRef.value?.focus();
 }
 
@@ -149,18 +159,29 @@ function insertQuickReply(text: string) {
 }
 
 function handleEmojiPicker() {
-  ElMessage.info('表情选择功能开发中');
+  ElMessage.info("表情选择功能开发中");
 }
 
 function handleFileSelect(file: File) {
   // 检查文件大小（100MB限制）
   const maxSize = 100 * 1024 * 1024;
   if (file.size > maxSize) {
-    ElMessage.error('文件大小不能超过 100MB');
+    ElMessage.error("文件大小不能超过 100MB");
     return false;
   }
 
-  emit('send-file', file);
+  emit("send-file", file);
+  return false; // 阻止默认上传
+}
+function handleContractSelect(file: File) {
+  // 检查文件大小（100MB限制）
+  const maxSize = 100 * 1024 * 1024;
+  if (file.size > maxSize) {
+    ElMessage.error("文件大小不能超过 100MB");
+    return false;
+  }
+
+  emit("send-contract", file);
   return false; // 阻止默认上传
 }
 </script>

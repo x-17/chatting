@@ -68,11 +68,16 @@ export class MessageSyncService {
                     const encryptedData = JSON.parse(serverMsg.encryptedContent);
 
                     // 解密
-                    const plaintext = await e2eeService.decryptMessage(
+                    const decryptionResult = await e2eeService.decryptMessage(
                         this.userId,
                         serverMsg.senderId,
                         encryptedData
                     );
+
+                    if (!decryptionResult.success || !decryptionResult.content) {
+                        console.error(`[MessageSync] Failed to decrypt message ${serverMsg.id}:`, decryptionResult.error);
+                        continue;
+                    }
 
                     // 构建本地消息对象
                     const message: P2PMessage = {
@@ -81,18 +86,23 @@ export class MessageSyncService {
                         senderId: serverMsg.senderId,
                         orderId: serverMsg.orderId,
                         recipientId: serverMsg.recipientId,
-                        content: plaintext,
+                        content: decryptionResult.content,
                         encryptedContent: encryptedData,
                         timestamp: serverMsg.timestamp,
-                        status: 'delivered',
-                        serverTimestamp: serverMsg.timestamp,
+                        sequence: serverMsg.sequence || await this.generateLocalSequence(serverMsg.orderId),
+                        status: 'delivered' as const,
+                        sendAttempts: serverMsg.sendAttempts || 0,
+                        maxRetries: serverMsg.maxRetries || 3,
+                        retryDelay: 1000,
+                        deliveryConfirmed: true,
+                        readConfirmed: false,
                         metadata: serverMsg.metadata
                     };
 
                     decryptedMessages.push(message);
 
                 } catch (error) {
-                    console.error(`[MessageSync] Failed to decrypt message ${serverMsg.id}:`, error);
+                    console.error(`[MessageSync] Failed to process message ${serverMsg.id}:`, error);
                 }
             }
 
@@ -162,7 +172,10 @@ export class MessageSyncService {
                         encryptedContent: JSON.stringify(message.encryptedContent),
                         messageType: message.type,
                         timestamp: message.timestamp,
-                        status: 'sent',
+                        sequence: message.sequence,
+                        status: 'sent' as const,
+                        sendAttempts: message.sendAttempts,
+                        maxRetries: message.maxRetries,
                         metadata: message.metadata
                     };
 
@@ -176,6 +189,15 @@ export class MessageSyncService {
 
                 } catch (error) {
                     console.error(`[MessageSync] Failed to retry message ${message.id}:`, error);
+
+                    // 更新重试状态
+                    await this.persistence.updateMessageRetryStatus(message.id, {
+                        status: 'retrying' as const,
+                        sendAttempts: (message.sendAttempts || 0) + 1,
+                        lastAttemptTime: Date.now(),
+                        nextRetryTime: Date.now() + (message.retryDelay || 1000),
+                        lastError: error instanceof Error ? error.message : String(error)
+                    });
                 }
             }
 
@@ -190,6 +212,81 @@ export class MessageSyncService {
     }
 
     /**
+     * 重试发送失败的消息（可选只重试某个订单的消息）
+     */
+    async retryFailedMessages(orderId?: string): Promise<{
+        success: boolean;
+        retriedCount: number;
+    }> {
+        try {
+            // 获取需要重试的消息
+            const messagesForRetry = await this.persistence.getMessagesForRetry();
+
+            // 按订单过滤
+            const filteredMessages = orderId
+                ? messagesForRetry.filter(msg => msg.orderId === orderId)
+                : messagesForRetry;
+
+            if (filteredMessages.length === 0) {
+                return { success: true, retriedCount: 0 };
+            }
+
+            console.log(`[MessageSync] Retrying ${filteredMessages.length} failed messages${orderId ? ` for order ${orderId}` : ''}`);
+
+            let retriedCount = 0;
+
+            for (const message of filteredMessages) {
+                try {
+                    // 准备服务器消息格式
+                    const serverMessage: PersistedP2PMessage = {
+                        id: message.id,
+                        senderId: message.senderId,
+                        recipientId: message.recipientId,
+                        orderId: message.orderId,
+                        encryptedContent: JSON.stringify(message.encryptedContent),
+                        messageType: message.type,
+                        timestamp: message.timestamp,
+                        sequence: message.sequence,
+                        status: 'sent' as const,
+                        sendAttempts: message.sendAttempts,
+                        maxRetries: message.maxRetries,
+                        metadata: message.metadata
+                    };
+
+                    // 发送到服务器
+                    await this.apiService.sendMessage(serverMessage);
+
+                    // 更新本地状态为sent
+                    await this.persistence.updateMessageStatus(message.id, 'sent');
+
+                    retriedCount++;
+
+                } catch (error) {
+                    console.error(`[MessageSync] Failed to retry message ${message.id}:`, error);
+
+                    // 更新重试状态
+                    const updatedSendAttempts = (message.sendAttempts || 0) + 1;
+                    await this.persistence.updateMessageRetryStatus(message.id, {
+                        status: updatedSendAttempts >= (message.maxRetries || 3) ? 'failed' as const : 'retrying' as const,
+                        sendAttempts: updatedSendAttempts,
+                        lastAttemptTime: Date.now(),
+                        nextRetryTime: Date.now() + (message.retryDelay || 1000) * Math.pow(2, updatedSendAttempts - 1), // 指数退避
+                        lastError: error instanceof Error ? error.message : String(error)
+                    });
+                }
+            }
+
+            console.log(`[MessageSync] Successfully retried ${retriedCount}/${filteredMessages.length} failed messages`);
+
+            return { success: true, retriedCount };
+
+        } catch (error) {
+            console.error('[MessageSync] Retry failed messages failed:', error);
+            return { success: false, retriedCount: 0 };
+        }
+    }
+
+    /**
      * 标记订单消息为已读
      */
     async markOrderMessagesAsRead(orderId: string): Promise<void> {
@@ -198,7 +295,6 @@ export class MessageSyncService {
             await this.persistence.markOrderMessagesAsRead(orderId);
 
             // 通知服务器（需要服务器支持按订单标记已读）
-            // 这里可以优化：先获取订单的未读消息ID，然后批量更新
             const orderMessages = await this.persistence.getOrderMessages(orderId, 1000);
             const unreadMessageIds = orderMessages
                 .filter(msg => msg.recipientId === this.userId && msg.status === 'delivered')
@@ -245,6 +341,64 @@ export class MessageSyncService {
     }
 
     /**
+     * 获取特定订单的会话信息
+     */
+    async getOrderSession(orderId: string): Promise<OrderSessionInfo | null> {
+        return await this.persistence.getOrderSession(orderId);
+    }
+
+    /**
+     * 获取订单的未读消息数量
+     */
+    async getOrderUnreadCount(orderId: string): Promise<number> {
+        return await this.persistence.getOrderUnreadCount(orderId);
+    }
+
+    /**
+     * 获取订单消息历史
+     */
+    async getOrderMessages(orderId: string, limit?: number, beforeTimestamp?: number): Promise<P2PMessage[]> {
+        return await this.persistence.getOrderMessages(orderId, limit, beforeTimestamp);
+    }
+
+    /**
+     * 获取待发送消息
+     */
+    async getPendingOrderMessages(orderId?: string): Promise<P2PMessage[]> {
+        return await this.persistence.getPendingOrderMessages(orderId);
+    }
+
+    /**
+     * 获取需要重试的消息
+     */
+    async getMessagesForRetry(): Promise<P2PMessage[]> {
+        return await this.persistence.getMessagesForRetry();
+    }
+
+    /**
+     * 更新消息状态
+     */
+    async updateMessageStatus(messageId: string, status: P2PMessage['status']): Promise<void> {
+        await this.persistence.updateMessageStatus(messageId, status);
+    }
+
+    /**
+     * 更新消息重试状态
+     */
+    async updateMessageRetryStatus(
+        messageId: string,
+        updates: {
+            status?: P2PMessage['status'];
+            sendAttempts?: number;
+            lastAttemptTime?: number;
+            nextRetryTime?: number;
+            lastError?: string;
+        }
+    ): Promise<void> {
+        await this.persistence.updateMessageRetryStatus(messageId, updates);
+    }
+
+    /**
      * 获取最后同步时间
      */
     private loadLastSyncTime(): void {
@@ -260,6 +414,26 @@ export class MessageSyncService {
         localStorage.setItem(`lastSyncTimestamp_${this.userId}`, timestamp.toString());
         console.log(`[MessageSync] Updated last sync time to: ${timestamp}`);
     }
+    /**
+     * 生成本地序列号（用于离线消息）
+     */
+    private async generateLocalSequence(orderId: string): Promise<number> {
+        try {
+            // 获取订单的本地最新消息来确定下一个序列号
+            const latestMessages = await this.persistence.getOrderMessages(orderId, 1);
+            if (latestMessages.length === 0) {
+                return 1; // 第一条消息
+            }
+
+            const latestSequence = Math.max(...latestMessages.map(msg => msg.sequence || 0));
+            return latestSequence + 1;
+
+        } catch (error) {
+            console.error(`[MessageSync] Generate local sequence for order ${orderId} error:`, error);
+            return Date.now(); // 降级方案：使用时间戳
+        }
+    }
+
 
     /**
      * 清理

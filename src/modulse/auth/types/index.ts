@@ -20,9 +20,8 @@ export interface E2eePublicKeySet {
 /** 用户信息结构 */
 export interface User {
     id: string;      // 使用北数所返回的 openId 作为系统内唯一ID
-    openid: string;
+    openId: string;
+    tenantId: number;
     userName: string;
-    password: string | null;
-
 }
 

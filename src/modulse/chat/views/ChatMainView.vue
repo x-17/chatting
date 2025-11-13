@@ -49,12 +49,14 @@
             :messages="currentMessages"
             :loading="messagesLoading"
             @load-more="handleLoadMoreMessages"
+            @is-agree-contract="handleIsAgreeContract"
           />
           <MessageInput
             :order="activeOrder"
             :disabled="!canSendMessage"
             @send="handleSendMessage"
             @send-file="handleSendFile"
+            @send-contract="handleSendContract"
           />
         </template>
         <div v-else class="empty-state">
@@ -63,14 +65,14 @@
       </div>
 
       <!-- 右侧：订单详情（可折叠） -->
-      <div class="right-panel" :class="{ collapsed: !showOrderDetail }">
+      <!-- <div class="right-panel" :class="{ collapsed: !showOrderDetail }">
         <OrderDetail
           v-if="activeOrder"
           :order="activeOrder"
           @close="showOrderDetail = false"
           @create-contract="handleCreateContract"
         />
-      </div>
+      </div> -->
 
       <!-- 折叠按钮 -->
       <div
@@ -90,7 +92,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { Message, DArrowLeft, DArrowRight } from "@element-plus/icons-vue";
 import { useAuthStore } from "../../auth/services/auth.store";
 import OrderList from "../components/OrderList.vue";
@@ -100,6 +102,8 @@ import OrderDetail from "../components/OrderDetail.vue";
 import { useChat } from "../composables/useChat";
 import { useOrderList } from "../composables/useOrderList";
 import mockLogin from "@/utils/mockLogin";
+import type { ChatMessage } from "../types/chat.types";
+import { ContractService } from "@/modulse/contracts/services/contract.service";
 
 const route = useRoute();
 const router = useRouter();
@@ -108,24 +112,31 @@ const authStore = useAuthStore();
 const showOrderDetail = ref(true);
 
 // 使用 composables
-const { orders, activeOrder, totalUnreadCount, loadOrders, selectOrder } =
-  useOrderList();
+const {
+  orders,
+  activeOrder,
+  totalUnreadCount,
+  activeOrderId,
+  loadOrders,
+  selectOrder,
+} = useOrderList();
 
 const {
   currentMessages,
   messagesLoading,
   sendMessage,
   sendFile,
+  sendContractFile,
   loadConversationMessages,
   loadMoreMessages,
 } = useChat();
 
 //组件命名，用于keep-alive
-defineOptions({ name: 'ChatMainView' });
+defineOptions({ name: "ChatMainView" });
 
 // 计算属性
 const userName = computed(() => {
-  const userId=sessionStorage.getItem('auth_current_user_id');
+  const userId = sessionStorage.getItem("auth_current_user_id");
   const prefix = `auth_${userId}`;
   const user = JSON.parse(localStorage.getItem(`${prefix}_user`) || "{}");
   return user.userName || "用户";
@@ -137,6 +148,9 @@ const userInitial = computed(() => userName.value.charAt(0).toUpperCase());
 const canSendMessage = computed(() => {
   return activeOrder.value?.status === "active";
 });
+const ContractServiceInstance = new ContractService(
+  authStore.user?.id || sessionStorage.getItem("auth_current_user_id") || ""
+);
 
 // 方法
 async function handleOrderSelect(orderId: string) {
@@ -197,7 +211,7 @@ async function handleSendFile(file: File) {
 
 function handleLoadMoreMessages() {
   if (activeOrder.value) {
-    loadMoreMessages(activeOrder.value.conversationId);
+    // loadMoreMessages(activeOrder.value.conversationId);
   }
 }
 
@@ -224,14 +238,59 @@ function handleUserAction(command: string) {
       break;
   }
 }
+async function handleSendContract(file: File) {
+  if (!activeOrder.value) return;
 
+  console.log("[ChatMain] Sending contract file:", file.name);
+  const confirmed = await ElMessageBox.confirm(
+    "确认签署此合同？签署后将无法撤销。",
+    "确认签署",
+    {
+      confirmButtonText: "确认签署",
+      cancelButtonText: "取消",
+      type: "warning",
+    }
+  );
+  if (!confirmed) {
+    return;
+  }
+  try {
+    const file_res = await sendContractFile(activeOrder.value, file);
+    ElMessage.success("合同文件发送成功");
+    const contract_res = await ContractServiceInstance.agreeOderSign(
+      activeOrderId.value,
+      file_res.fileId
+    );
+    ElMessage.success(contract_res.data);
+    console.log("Contract sign response:", contract_res.data);
+  } catch (error: any) {
+    ElMessage.error(error.message || "合同文件发送失败");
+  }
+}
+async function handleIsAgreeContract(isAgree: boolean, message: ChatMessage) {
+  // if (!activeOrder.value) return;
+  // console.log("[ChatMain] Handling contract agreement:", isAgree, message.id);
+  // try {
+  //   if (isAgree) {
+  //     const contract_res = await agreeOderSign(message.fileId!);
+  //     ElMessage.success(contract_res.data);
+  //     console.log("Contract sign response:", contract_res.data);
+  //   } else {
+  //     const reject_res = await rejectOderSign();
+  //     ElMessage.success(reject_res.data);
+  //     console.log("Contract reject response:", reject_res.data);
+  //   }
+  // } catch (error: any) {
+  //   ElMessage.error(error.message || "请求失败");
+  // }
+}
 // 初始化
 onMounted(async () => {
   mockLogin({
-    id: "user_alice",
-    openid: "dev-openid",
+    id: "10003",
+    openId: "dev-openid",
     userName: "本地开发",
-    password: "",
+    tenantId: 0xdeadbeef,
   });
   console.log("[ChatMain] Component mounted");
 

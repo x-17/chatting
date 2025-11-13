@@ -6,15 +6,112 @@ import { fromBase64, toBase64 } from '../utils/e2ee.utils';
 import { IndexedDbSignalProtocolStore, type SessionStateInfo } from './signal.store';
 import type { StorableIdentity, PublicKeyBundle } from '../types';
 import { get as idbGet, set as idbSet, createStore } from 'idb-keyval';
-import { getKeyBundleForUser } from './users.api.ts'; // API函数
-// 临时切换到模拟API进行本地测试
-//import { getKeyBundleForUser } from './users.api.mock.ts';
+import { getKeyBundleForUser } from './users.api.ts';
 
 // 创建用于存储身份的 IndexedDB store
 const identityDbStore = createStore('e2ee-identity-store', 'identities');
 
+// ========== 修改开始：新增类型定义 ==========
+
 /**
- * E2EE模块的主服务 -
+ * 解密结果结构
+ */
+export interface DecryptionResult {
+    success: boolean;
+    content?: string;
+    error?: string;
+    errorType?: 'SESSION_EXPIRED' | 'DECRYPTION_FAILED' | 'NETWORK_ERROR' | 'UNKNOWN_ERROR';
+    needsRecovery?: boolean;
+}
+
+/**
+ * 加密结果结构
+ */
+export interface EncryptionResult {
+    success: boolean;
+    ciphertext?: any;
+    error?: string;
+    errorType?: 'SESSION_ERROR' | 'ENCRYPTION_FAILED' | 'NETWORK_ERROR' | 'UNKNOWN_ERROR';
+}
+
+/**
+ * 分析解密错误类型
+ */
+function analyzeDecryptionError(error: any): {
+    errorType: DecryptionResult['errorType'];
+    needsRecovery: boolean;
+} {
+    const errorMessage = error?.message?.toLowerCase() || '';
+
+    // 需要会话恢复的错误类型
+    const recoverableErrors = [
+        'session not found',
+        'invalid key',
+        'ratchet error',
+        'message index',
+        'no session'
+    ];
+
+    const needsRecovery = recoverableErrors.some(pattern =>
+        errorMessage.includes(pattern)
+    );
+
+    let errorType: DecryptionResult['errorType'] = 'UNKNOWN_ERROR';
+
+    if (needsRecovery) {
+        errorType = 'SESSION_EXPIRED';
+    } else if (errorMessage.includes('network') || errorMessage.includes('timeout')) {
+        errorType = 'NETWORK_ERROR';
+    } else {
+        errorType = 'DECRYPTION_FAILED';
+    }
+
+    return {
+        errorType,
+        needsRecovery
+    };
+}
+
+/**
+ * 分析加密错误类型
+ */
+function analyzeEncryptionError(error: any): {
+    errorType: EncryptionResult['errorType'];
+} {
+    const errorMessage = error?.message?.toLowerCase() || '';
+
+    let errorType: EncryptionResult['errorType'] = 'UNKNOWN_ERROR';
+
+    if (errorMessage.includes('session') || errorMessage.includes('key')) {
+        errorType = 'SESSION_ERROR';
+    } else if (errorMessage.includes('network') || errorMessage.includes('timeout')) {
+        errorType = 'NETWORK_ERROR';
+    } else {
+        errorType = 'ENCRYPTION_FAILED';
+    }
+
+    return { errorType };
+}
+
+/**
+ * 获取用户友好的错误消息 - 真正的私有函数
+ */
+function getUserFriendlyErrorMessage(analysis: any): string {
+    const errorMessages = {
+        SESSION_EXPIRED: '加密会话已过期，需要重新建立连接',
+        DECRYPTION_FAILED: '无法解密消息，请检查消息完整性',
+        ENCRYPTION_FAILED: '加密失败，请重试',
+        SESSION_ERROR: '会话错误，请检查连接状态',
+        NETWORK_ERROR: '网络连接问题，请检查网络后重试',
+        UNKNOWN_ERROR: '处理消息时发生未知错误'
+    };
+
+    return errorMessages[analysis.errorType] || errorMessages.UNKNOWN_ERROR;
+}
+// ========== 修改结束 ==========
+
+/**
+ * E2EE模块的主服务 - 增强版本
  */
 export const e2eeService = {
     /**
@@ -155,8 +252,10 @@ export const e2eeService = {
         }
     },
 
+    // ========== 修改开始：增强加密方法 ==========
+
     /**
-     * 加密一条消息
+     * 加密一条消息 - 增强版本
      * @param myId 我自己的用户ID
      * @param recipientId 接收者的用户ID
      * @param message 明文消息
@@ -167,7 +266,7 @@ export const e2eeService = {
         recipientId: string,
         message: string,
         onSessionUpdate?: (stateInfo: SessionStateInfo) => void
-    ): Promise<any> {
+    ): Promise<EncryptionResult> {
         console.log(`[E2EE] ${myId} 正在为 ${recipientId} 加密消息`);
 
         try {
@@ -178,16 +277,31 @@ export const e2eeService = {
             const ciphertext = await cipher.encrypt(new TextEncoder().encode(message).buffer);
 
             console.log(`[E2EE] ${myId} 消息加密成功，类型: ${ciphertext.type}`);
-            return ciphertext;
+
+            return {
+                success: true,
+                ciphertext: ciphertext
+            };
 
         } catch (error) {
             console.error(`[E2EE] ${myId} 加密消息失败:`, error);
-            throw new Error(`Encryption failed: ${error instanceof Error ? error.message : String(error)}`);
+
+            const errorAnalysis = analyzeEncryptionError(error); // 🔑 使用私有函数
+
+            return {
+                success: false,
+                error: getUserFriendlyErrorMessage(errorAnalysis), // 🔑 使用私有函数
+                errorType: errorAnalysis.errorType
+            };
         }
     },
 
+    // ========== 修改结束 ==========
+
+    // ========== 修改开始：增强解密方法 ==========
+
     /**
-     * 解密一条消息
+     * 解密一条消息 - 增强版本
      * @param myId 我自己的用户ID
      * @param senderId 发送方的用户ID
      * @param ciphertext 加密消息体
@@ -198,7 +312,7 @@ export const e2eeService = {
         senderId: string,
         ciphertext: any,
         onSessionUpdate?: (stateInfo: SessionStateInfo) => void
-    ): Promise<string> {
+    ): Promise<DecryptionResult> {
         console.log(`[E2EE] ${myId} 正在解密来自 ${senderId} 的消息，类型: ${ciphertext.type}`);
 
         try {
@@ -217,13 +331,60 @@ export const e2eeService = {
 
             const plaintext = new TextDecoder().decode(new Uint8Array(plaintextBuffer));
             console.log(`[E2EE] ${myId} 解密成功`);
-            return plaintext;
+
+            return {
+                success: true,
+                content: plaintext
+            };
 
         } catch (error) {
             console.error(`[E2EE] ${myId} 解密消息失败:`, error);
-            throw new Error(`Decryption failed: ${error instanceof Error ? error.message : String(error)}`);
+
+            const errorAnalysis = analyzeDecryptionError(error); // 🔑 使用私有函数
+
+            return {
+                success: false,
+                error: getUserFriendlyErrorMessage(errorAnalysis), // 🔑 使用私有函数
+                errorType: errorAnalysis.errorType,
+                needsRecovery: errorAnalysis.needsRecovery
+            };
         }
     },
+
+    // ========== 修改结束 ==========
+
+    // ========== 修改开始：新增会话恢复方法 ==========
+
+    /**
+     * 恢复与指定用户的会话
+     * @param myId 我自己的用户ID
+     * @param recipientId 对方的用户ID
+     */
+    async recoverSession(myId: string, recipientId: string): Promise<{ success: boolean; error?: string }> {
+        console.log(`[E2EE] ${myId} 尝试恢复与 ${recipientId} 的会话`);
+
+        try {
+            // 1. 清理旧的会话状态
+            await this.clearUserSessions(myId);
+            console.log(`[E2EE] ${myId} 已清理旧会话`);
+
+            // 2. 重新建立会话
+            await this.ensureSession(myId, recipientId);
+            console.log(`[E2EE] ${myId} 与 ${recipientId} 的会话恢复成功`);
+
+            return { success: true };
+
+        } catch (error) {
+            console.error(`[E2EE] ${myId} 恢复会话失败:`, error);
+
+            return {
+                success: false,
+                error: `会话恢复失败: ${error instanceof Error ? error.message : String(error)}`
+            };
+        }
+    },
+
+    // ========== 修改结束 ==========
 
     /**
      * 对合同数据进行签名
@@ -306,5 +467,6 @@ export const e2eeService = {
             console.error(`[E2EE] 清理 ${userId} 会话失败:`, error);
             throw error;
         }
-    }
+    },
+
 };

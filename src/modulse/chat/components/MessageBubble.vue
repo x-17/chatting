@@ -18,7 +18,7 @@
         <div class="message-meta">
           <span class="time">{{ formatTime(message.timestamp) }}</span>
           <template v-if="isMine">
-            <el-icon v-if="message.status === 'sending'" class="is-loading">
+            <el-icon v-if="message.status === 'pending'" class="is-loading">
               <Loading />
             </el-icon>
             <el-icon v-else-if="message.status === 'failed'" color="#F56C6C">
@@ -32,7 +32,9 @@
             </el-icon>
             <template v-else-if="message.status === 'read'">
               <el-icon color="#409EFF"><Check /></el-icon>
-              <el-icon color="#409EFF" style="margin-left: -8px;"><Check /></el-icon>
+              <el-icon color="#409EFF" style="margin-left: -8px"
+                ><Check
+              /></el-icon>
             </template>
           </template>
         </div>
@@ -47,10 +49,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
-import { Loading, CircleClose, Check } from '@element-plus/icons-vue';
-import { useAuthStore } from '../../auth/services/auth.store';
-import type { ChatMessage } from '../types/chat.types';
+import { computed } from "vue";
+import { Loading, CircleClose, Check } from "@element-plus/icons-vue";
+import { useAuthStore } from "../../auth/services/auth.store";
+import type { ChatMessage } from "../types/chat.types";
 
 interface Props {
   message: ChatMessage;
@@ -61,18 +63,18 @@ interface Props {
 const props = defineProps<Props>();
 const authStore = useAuthStore();
 
-const currentUserInitial = computed(() =>
-    authStore.user?.userName.charAt(0).toUpperCase() || 'U'
+const currentUserInitial = computed(
+  () => authStore.user?.userName.charAt(0).toUpperCase() || "U"
 );
 
 const senderInitial = computed(() =>
-    props.message.senderId.charAt(0).toUpperCase()
+  props.message.senderId.charAt(0).toUpperCase()
 );
 
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const hours = date.getHours().toString().padStart(2, "0");
+  const minutes = date.getMinutes().toString().padStart(2, "0");
   return `${hours}:${minutes}`;
 }
 </script>
@@ -109,7 +111,7 @@ function formatTime(timestamp: number): string {
   background: white;
   border-radius: 8px;
   padding: 10px 14px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
   word-break: break-word;
 }
 

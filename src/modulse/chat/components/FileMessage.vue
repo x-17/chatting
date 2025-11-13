@@ -12,10 +12,10 @@
         <!-- 图片预览 -->
         <div v-if="isImage" class="image-preview">
           <el-image
-              :src="imagePreviewUrl"
-              :preview-src-list="[imagePreviewUrl]"
-              fit="cover"
-              lazy
+            :src="imagePreviewUrl"
+            :preview-src-list="[imagePreviewUrl]"
+            fit="cover"
+            lazy
           >
             <template #error>
               <div class="image-error">
@@ -46,17 +46,18 @@
 
           <!-- 下载按钮 -->
           <el-button
-              v-if="!downloading"
-              type="primary"
-              size="small"
-              :icon="Download"
-              @click="handleDownload"
+            v-if="!downloading"
+            type="primary"
+            size="small"
+            :icon="Download"
+            @click="handleDownload"
           >
             下载
           </el-button>
           <el-button v-else type="info" size="small" :loading="true">
             下载中
           </el-button>
+          <!-- 同意/拒绝按钮（仅非自己的文件显示） -->
         </div>
 
         <!-- 消息元数据 -->
@@ -74,6 +75,23 @@
             </el-icon>
           </template>
         </div>
+        <!--  v-if="contractState && !isMine" -->
+        <div class="action-buttons" v-loading="contractLoading">
+          <el-button
+            type="success"
+            size="small"
+            @click="handleContract('agree')"
+          >
+            同意签署
+          </el-button>
+          <el-button
+            type="danger"
+            size="small"
+            @click="handleContract('refuse')"
+          >
+            拒绝签署
+          </el-button>
+        </div>
       </div>
 
       <!-- 我的头像 -->
@@ -85,18 +103,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ref, computed, onMounted } from "vue";
+import { ElMessage } from "element-plus";
 import {
   Document,
   Picture,
   Download,
   Loading,
   CircleClose,
-  Check
-} from '@element-plus/icons-vue';
-import { useAuthStore } from '../../auth/services/auth.store';
-import type { ChatMessage } from '../types/chat.types';
+  Check,
+} from "@element-plus/icons-vue";
+import { useAuthStore } from "../../auth/services/auth.store";
+import type { ChatMessage } from "../types/chat.types";
+import { useOrderList } from "@/modulse/chat/composables/useOrderList";
+import { el } from "element-plus/es/locales.mjs";
+import { ContractService } from "@/modulse/contracts/services/contract.service";
 
 interface Props {
   message: ChatMessage;
@@ -104,7 +125,8 @@ interface Props {
 }
 
 interface Emits {
-  (e: 'download', message: ChatMessage): void;
+  (e: "download", message: ChatMessage): void;
+  (e: "trigger-contract", isAgree: boolean, message: ChatMessage): void;
 }
 
 const props = defineProps<Props>();
@@ -112,46 +134,52 @@ const emit = defineEmits<Emits>();
 
 const authStore = useAuthStore();
 const downloading = ref(false);
+const contractLoading = ref(false);
+let contractState = ref<boolean>(false);
+const contractService = new ContractService(
+  authStore.user?.id || sessionStorage.getItem("auth_current_user_id") || ""
+);
 
-const currentUserInitial = computed(() =>
-    authStore.user?.userName.charAt(0).toUpperCase() || 'U'
+const currentUserInitial = computed(
+  () => authStore.user?.userName.charAt(0).toUpperCase() || "U"
 );
 
 const senderInitial = computed(() =>
-    props.message.senderId.charAt(0).toUpperCase()
+  props.message.senderId.charAt(0).toUpperCase()
 );
 
-const fileName = computed(() =>
-    props.message.metadata?.fileName || '未知文件'
-);
+const fileName = computed(() => props.message.metadata?.fileName || "未知文件");
 
-const fileSize = computed(() =>
-    props.message.metadata?.fileSize || 0
-);
+const fileSize = computed(() => props.message.metadata?.fileSize || 0);
 
-const isImage = computed(() =>
-    props.message.type === 'image' ||
-    props.message.metadata?.mimeType?.startsWith('image/')
+const isImage = computed(
+  () =>
+    props.message.type === "image" ||
+    props.message.metadata?.mimeType?.startsWith("image/")
+);
+const isContract = computed(
+  () => props.message.type === "contract"
+  // props.message.metadata?.mimeType?.startsWith("image/")
 );
 
 const imagePreviewUrl = computed(() => {
   // 如果是图片消息，返回预览URL
   // 实际应该从服务器获取
-  return props.message.metadata?.previewUrl || '';
+  return props.message.metadata?.previewUrl || "";
 });
 
 function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
+  if (bytes === 0) return "0 B";
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const sizes = ["B", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
 }
 
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const hours = date.getHours().toString().padStart(2, "0");
+  const minutes = date.getMinutes().toString().padStart(2, "0");
   return `${hours}:${minutes}`;
 }
 
@@ -160,18 +188,78 @@ async function handleDownload() {
 
   try {
     downloading.value = true;
-    emit('download', props.message);
+    emit("download", props.message);
 
     // 下载逻辑由父组件处理
     // 这里只显示加载状态
-
   } catch (error) {
-    ElMessage.error('下载失败');
+    ElMessage.error("下载失败");
     console.error(error);
   } finally {
     downloading.value = false;
   }
 }
+async function handleContract(params: string) {
+  if (contractLoading.value) return;
+  // try {
+  //   if (params === "agree") {
+  //     emit("trigger-contract", true, props.message);
+  //   } else if (params === "refuse") {
+  //     emit("trigger-contract", false, props.message);
+  //   }
+  //   // 由父组件处理
+  //   // 这里只显示加载状态
+  // } catch (error) {
+  //   ElMessage.error("请求失败");
+  //   console.error(error);
+  // } finally {
+  //   contractLoading.value = false;
+  // }
+  try {
+    if (params === "agree") {
+      const contract_res = await contractService.agreeOderSign(
+        props.message.orderId!,
+        props.message.fileId
+      ); //props.message.fileId!
+      ElMessage.success(contract_res.data);
+      console.log("Contract sign response:", contract_res.data);
+      if (contract_res.code === 1) {
+        contractState.value = false;
+      }
+    } else {
+      const reject_res = await contractService.rejectOderSign(
+        props.message.orderId
+      );
+      ElMessage.success(reject_res.data);
+      console.log("Contract reject response:", reject_res.data);
+      if (reject_res.code === 1) {
+        contractState.value = false;
+      }
+    }
+  } catch (error: any) {
+    // ElMessage.error(error.message || "请求失败");
+    console.log(error);
+  }
+}
+onMounted(async () => {
+  // 是否显示签署框
+  if (props.message.type === "contract") {
+    try {
+      let res = await contractService.queryOrderSignState(
+        props.message.orderId
+      );
+      if (res.code === 1) {
+        // 🔹 类型保护：判断 data 不是字符串（即成功响应）
+        if (typeof res.data !== "string" && res.data.status === 0) {
+          contractState.value = true;
+        }
+      }
+    } catch (error) {
+      console.log(error);
+      ElMessage.error("查询合同状态失败");
+    }
+  }
+});
 </script>
 
 <style scoped>
@@ -199,7 +287,7 @@ async function handleDownload() {
   background: white;
   border-radius: 8px;
   padding: 12px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
   min-width: 280px;
 }
 
@@ -276,5 +364,26 @@ async function handleDownload() {
 .time {
   font-size: 11px;
   color: #909399;
+}
+/* 按钮容器样式 */
+.action-buttons {
+  /* 按钮均匀排列 */
+  display: flex;
+  justify-content: space-around;
+  /* 按钮之间的间距 */
+  gap: 8px;
+  /* 与上方文件信息区域的距离 */
+  margin-top: 12px;
+  /* 可选：增加底部内边距，避免紧贴容器边缘 */
+  padding-bottom: 4px;
+}
+
+/* 可选：按钮悬停/激活状态微调（如需自定义） */
+.action-buttons .el-button--success:hover {
+  background-color: #41b883; /* 加深绿色 */
+}
+
+.action-buttons .el-button--danger:hover {
+  background-color: #f56c6c; /* 加深红色 */
 }
 </style>

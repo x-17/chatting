@@ -4,17 +4,17 @@
       <!-- 错误提示 -->
       <div v-if="errorAlert.show" class="error-alert">
         <el-alert
-            :type="errorAlert.type"
-            :title="errorAlert.title"
-            :description="errorAlert.description"
-            show-icon
-            :closable="true"
-            @close="dismissError"
+          :type="errorAlert.type"
+          :title="errorAlert.title"
+          :description="errorAlert.description"
+          show-icon
+          :closable="true"
+          @close="dismissError"
         />
       </div>
 
       <!-- 登录卡片 -->
-      <el-card class="login-card" :class="{ 'loading': isLoading }">
+      <el-card class="login-card" :class="{ loading: isLoading }">
         <template #header>
           <div class="card-header">
             <div class="logo-section">
@@ -63,12 +63,12 @@
           <!-- 登录按钮 -->
           <div class="login-actions">
             <el-button
-                type="primary"
-                size="large"
-                @click="redirectToSso"
-                :loading="isLoading"
-                :disabled="!isConfigValid || cooldownRemaining > 0"
-                class="login-button"
+              type="primary"
+              size="large"
+              @click="redirectToSso"
+              :loading="isLoading"
+              :disabled="!isConfigValid || cooldownRemaining > 0"
+              class="login-button"
             >
               <span v-if="cooldownRemaining > 0">
                 请等待 {{ cooldownRemaining }}s 后重试
@@ -76,18 +76,16 @@
               <span v-else-if="isLoading">
                 {{ loadingText }}
               </span>
-              <span v-else>
-                前往统一认证平台登录
-              </span>
+              <span v-else> 前往统一认证平台登录 </span>
             </el-button>
 
             <!-- 重试按钮（错误时显示） -->
             <el-button
-                v-if="hasError && !isLoading"
-                @click="retryLogin"
-                size="large"
-                type="default"
-                class="retry-button"
+              v-if="hasError && !isLoading"
+              @click="retryLogin"
+              size="large"
+              type="default"
+              class="retry-button"
             >
               重试登录
             </el-button>
@@ -105,13 +103,12 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, computed, onUnmounted } from 'vue';
-import { ElButton, ElCard, ElAlert, ElMessage } from 'element-plus';
-import { useRoute, useRouter } from "vue-router";
+import { onMounted, ref, computed, onUnmounted } from "vue";
+import { ElButton, ElCard, ElAlert, ElMessage } from "element-plus";
+import { useRoute } from "vue-router";
 
 // 状态管理
 const route = useRoute();
-const router = useRouter();
 const isLoading = ref(false);
 const hasError = ref(false);
 const cooldownRemaining = ref(0);
@@ -120,21 +117,21 @@ const retryAttempts = ref(0);
 // 错误提示状态
 const errorAlert = ref({
   show: false,
-  type: 'error' as 'error' | 'warning' | 'info',
-  title: '',
-  description: ''
+  type: "error" as "error" | "warning" | "info",
+  title: "",
+  description: "",
 });
 
 // 配置验证
 const isConfigValid = ref(true);
-let cooldownTimer: NodeJS.Timeout | null = null;
+let cooldownTimer: number | null = null;
 
 // 计算属性
 const loadingText = computed(() => {
   const texts = [
-    '正在跳转到认证平台...',
-    '正在建立安全连接...',
-    '正在验证系统配置...'
+    "正在跳转到认证平台...",
+    "正在建立安全连接...",
+    "正在验证系统配置...",
   ];
   return texts[Math.floor(Date.now() / 2000) % texts.length];
 });
@@ -158,11 +155,11 @@ const initializeLogin = () => {
   // 检查是否从错误页面重定向过来
   const reason = route.query.reason as string;
   if (reason) {
-    showErrorAlert('warning', '需要重新登录', getReasonText(reason));
+    showErrorAlert("warning", "需要重新登录", getReasonText(reason));
   }
 
   // 恢复重试次数
-  const savedRetryCount = sessionStorage.getItem('login_retry_count');
+  const savedRetryCount = sessionStorage.getItem("login_retry_count");
   if (savedRetryCount) {
     retryAttempts.value = parseInt(savedRetryCount);
   }
@@ -175,7 +172,11 @@ const validateEnvironment = () => {
 
   if (!ssoBaseUrl || !clientId) {
     isConfigValid.value = false;
-    showErrorAlert('error', '系统配置错误', '认证平台配置缺失，请联系系统管理员');
+    showErrorAlert(
+      "error",
+      "系统配置错误",
+      "认证平台配置缺失，请联系系统管理员"
+    );
     return;
   }
 
@@ -184,39 +185,43 @@ const validateEnvironment = () => {
     new URL(ssoBaseUrl);
   } catch {
     isConfigValid.value = false;
-    showErrorAlert('error', '配置无效', '认证平台地址格式不正确');
+    showErrorAlert("error", "配置无效", "认证平台地址格式不正确");
   }
 };
 
 // 处理路由参数
 const handleRouteParams = () => {
   const orderId = route.query.orderId;
-  if (typeof orderId === 'string' && orderId) {
-    sessionStorage.setItem('redirect_context_orderId', orderId);
+  if (typeof orderId === "string" && orderId) {
+    sessionStorage.setItem("redirect_context_orderId", orderId);
     console.log(`Context saved: orderId = ${orderId}`);
 
     // 显示上下文信息
-    showErrorAlert('info', '业务上下文', `订单 ${orderId} 需要登录后继续处理`);
+    showErrorAlert("info", "业务上下文", `订单 ${orderId} 需要登录后继续处理`);
   }
 };
 
 // 获取错误原因文本
 const getReasonText = (reason: string): string => {
   const reasonMap: Record<string, string> = {
-    'expired': '您的登录会话已过期，为保障安全需要重新登录',
-    'error': '系统检测到异常，建议重新登录以确保安全',
-    'logout': '您已成功登出系统'
+    expired: "您的登录会话已过期，为保障安全需要重新登录",
+    error: "系统检测到异常，建议重新登录以确保安全",
+    logout: "您已成功登出系统",
   };
-  return reasonMap[reason] || '需要重新验证身份';
+  return reasonMap[reason] || "需要重新验证身份";
 };
 
 // 显示错误提示
-const showErrorAlert = (type: 'error' | 'warning' | 'info', title: string, description: string) => {
+const showErrorAlert = (
+  type: "error" | "warning" | "info",
+  title: string,
+  description: string
+) => {
   errorAlert.value = {
     show: true,
     type,
     title,
-    description
+    description,
   };
 };
 
@@ -251,11 +256,12 @@ const redirectToSso = async () => {
 
     // 增加重试限制
     if (retryAttempts.value >= 5) {
-      throw new Error('登录尝试次数过多，请稍后再试或联系技术支持');
+      throw new Error("登录尝试次数过多，请稍后再试或联系技术支持");
     }
 
     // 获取配置
-    const ssoBaseUrl = import.meta.env.VITE_SSO_BASE_URL;
+    // const ssoBaseUrl = import.meta.env.VITE_SSO_BASE_URL;
+    const ssoBaseUrl = import.meta.env.VITE_SSO_MOCK_URL; //测试用
     const clientId = import.meta.env.VITE_SSO_CLIENT_ID;
 
     // 生成安全的state参数
@@ -263,8 +269,8 @@ const redirectToSso = async () => {
     const timestamp = Date.now().toString();
 
     // 存储验证信息
-    sessionStorage.setItem('sso_state', state);
-    sessionStorage.setItem('sso_state_timestamp', timestamp);
+    sessionStorage.setItem("sso_state", state);
+    sessionStorage.setItem("sso_state_timestamp", timestamp);
 
     // 构建回调地址
     const redirectUri = `${window.location.origin}/auth/callback`;
@@ -274,7 +280,7 @@ const redirectToSso = async () => {
       client_id: clientId,
       state: state,
       redirect_uri: redirectUri,
-      response_type: 'code',
+      response_type: "code",
     });
 
     const authorizationUrl = `${ssoBaseUrl}/#/login/oauth?${params.toString()}`;
@@ -283,19 +289,18 @@ const redirectToSso = async () => {
     try {
       new URL(authorizationUrl);
     } catch {
-      throw new Error('生成的授权URL无效');
+      throw new Error("生成的授权URL无效");
     }
 
     // 更新重试计数
     retryAttempts.value++;
-    sessionStorage.setItem('login_retry_count', retryAttempts.value.toString());
+    sessionStorage.setItem("login_retry_count", retryAttempts.value.toString());
 
     // 添加延迟以显示加载状态
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
     // 跳转到SSO平台
     window.location.href = authorizationUrl;
-
   } catch (error: any) {
     handleLoginError(error);
   } finally {
@@ -311,28 +316,30 @@ const generateSecureState = (): string => {
   // 使用Web Crypto API生成安全随机数
   const array = new Uint8Array(16);
   crypto.getRandomValues(array);
-  return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+  return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join(
+    ""
+  );
 };
 
 // 处理登录错误
 const handleLoginError = (error: any) => {
-  console.error('Login error:', error);
+  console.error("Login error:", error);
   hasError.value = true;
 
-  let title = '登录失败';
-  let description = error.message || '未知错误';
+  let title = "登录失败";
+  let description = error.message || "未知错误";
   let cooldown = 0;
 
   // 根据错误类型设置不同的处理策略
-  if (error.message.includes('配置')) {
-    title = '系统配置错误';
-    description = '认证平台配置有误，请联系系统管理员';
-  } else if (error.message.includes('网络')) {
-    title = '网络连接错误';
-    description = '无法连接到认证服务器，请检查网络连接';
+  if (error.message.includes("配置")) {
+    title = "系统配置错误";
+    description = "认证平台配置有误，请联系系统管理员";
+  } else if (error.message.includes("网络")) {
+    title = "网络连接错误";
+    description = "无法连接到认证服务器，请检查网络连接";
     cooldown = 5;
-  } else if (error.message.includes('次数过多')) {
-    title = '尝试次数过多';
+  } else if (error.message.includes("次数过多")) {
+    title = "尝试次数过多";
     description = error.message;
     cooldown = 30;
   } else {
@@ -342,7 +349,7 @@ const handleLoginError = (error: any) => {
     }
   }
 
-  showErrorAlert('error', title, description);
+  showErrorAlert("error", title, description);
 
   if (cooldown > 0) {
     startCooldown(cooldown);
@@ -358,8 +365,8 @@ const retryLogin = () => {
   // 如果重试次数过多，重置计数器
   if (retryAttempts.value >= 5) {
     retryAttempts.value = 0;
-    sessionStorage.removeItem('login_retry_count');
-    ElMessage.info('重试计数器已重置');
+    sessionStorage.removeItem("login_retry_count");
+    ElMessage.info("重试计数器已重置");
   }
 
   // 重新尝试登录
@@ -505,7 +512,8 @@ const retryLogin = () => {
   margin-bottom: 20px;
 }
 
-.login-button, .retry-button {
+.login-button,
+.retry-button {
   width: 100%;
   height: 48px;
   border-radius: 8px;
@@ -555,7 +563,8 @@ const retryLogin = () => {
   padding-top: 20px;
 }
 
-.version-info, .security-badge {
+.version-info,
+.security-badge {
   color: rgba(255, 255, 255, 0.8);
   font-size: 12px;
   margin-bottom: 8px;
@@ -592,7 +601,8 @@ const retryLogin = () => {
     padding: 10px 0;
   }
 
-  .login-button, .retry-button {
+  .login-button,
+  .retry-button {
     height: 44px;
     font-size: 15px;
   }
@@ -605,11 +615,14 @@ const retryLogin = () => {
     color: #e9ecef;
   }
 
-  .system-title, .login-info h3 {
+  .system-title,
+  .login-info h3 {
     color: #e9ecef;
   }
 
-  .subtitle, .login-description, .feature-desc {
+  .subtitle,
+  .login-description,
+  .feature-desc {
     color: #adb5bd;
   }
 
@@ -621,4 +634,5 @@ const retryLogin = () => {
     background: rgba(255, 255, 255, 0.05);
     color: #e9ecef;
   }
-}</style>
+}
+</style>

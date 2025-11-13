@@ -4,12 +4,12 @@ import { openDB, type IDBPDatabase } from 'idb';
 import type { P2PMessage, OrderSessionInfo } from '../types/message.types';
 
 const DB_NAME = 'p2p-messages-db';
-const DB_VERSION = 2; // 版本升级
+const DB_VERSION = 3; // 版本升级到3，支持重传字段
 const STORE_NAME = 'messages';
 const ORDER_SESSIONS_STORE = 'order_sessions';
 
 /**
- * 基于订单的消息持久化服务 - 本地 IndexedDB 存储
+ * 基于订单的消息持久化服务 - 精简版本
  */
 export class MessagePersistenceService {
     private db: IDBPDatabase | null = null;
@@ -28,25 +28,21 @@ export class MessagePersistenceService {
         try {
             this.db = await openDB(DB_NAME, DB_VERSION, {
                 upgrade(db, oldVersion) {
-                    // 版本1到版本2的迁移：添加订单支持
-                    if (oldVersion < 2) {
-                        // 删除旧的消息存储
+                    // 版本2到版本3的迁移：添加重传支持
+                    if (oldVersion < 3) {
+                        // 删除旧的消息存储（如果存在）
                         if (db.objectStoreNames.contains(STORE_NAME)) {
                             db.deleteObjectStore(STORE_NAME);
                         }
 
-                        // 创建新的消息存储（基于订单）
+                        // 创建新的消息存储
                         const messageStore = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
 
-                        // 创建基于订单的索引
-                        messageStore.createIndex('by-order', ['orderId', 'timestamp']);
-                        messageStore.createIndex('by-order-status', ['orderId', 'status']);
-                        messageStore.createIndex('by-user-order', ['userId', 'orderId', 'timestamp']);
-                        messageStore.createIndex('by-sender-order', ['senderId', 'orderId']);
-                        messageStore.createIndex('by-recipient-order', ['recipientId', 'orderId']);
-                        messageStore.createIndex('by-status', 'status');
-                        messageStore.createIndex('by-timestamp', 'timestamp');
-                        messageStore.createIndex('by-user', 'userId');
+                        // 4个核心索引
+                        messageStore.createIndex('by-order-sequence', ['orderId', 'sequence']); // 订单+序列号排序
+                        messageStore.createIndex('by-order-status', ['orderId', 'status']);     // 订单+状态查询
+                        messageStore.createIndex('by-retry-time', 'nextRetryTime');            // 重试时间调度
+                        messageStore.createIndex('by-user-order', ['userId', 'orderId', 'timestamp']); // 用户数据隔离
 
                         // 创建订单会话存储
                         const sessionStore = db.createObjectStore(ORDER_SESSIONS_STORE, { keyPath: 'orderId' });
@@ -56,7 +52,7 @@ export class MessagePersistenceService {
                 },
             });
 
-            console.log(`[MessagePersistence] Order-based database initialized for user: ${this.userId}`);
+            console.log(`[MessagePersistence] Database v${DB_VERSION} initialized for user: ${this.userId}`);
         } catch (error) {
             console.error('[MessagePersistence] Init error:', error);
             throw error;
@@ -71,7 +67,19 @@ export class MessagePersistenceService {
 
         const messageWithUser = {
             ...message,
-            userId: this.userId
+            userId: this.userId,
+            // 确保默认值
+            sequence: message.sequence || await this.generateSequence(message.orderId),
+            sendAttempts: message.sendAttempts || 0,
+            maxRetries: message.maxRetries || 3, // 默认3次重试
+            retryDelay: message.retryDelay || 1000, // 默认1秒基础延迟
+            deliveryConfirmed: message.deliveryConfirmed || false,
+            readConfirmed: message.readConfirmed || false,
+            metadata: {
+                firstSendTime: message.metadata?.firstSendTime || Date.now(),
+                errorCount: message.metadata?.errorCount || 0,
+                ...message.metadata
+            }
         };
 
         try {
@@ -97,9 +105,23 @@ export class MessagePersistenceService {
 
         try {
             await Promise.all(
-                messages.map(msg =>
-                    tx.store.put({ ...msg, userId: this.userId })
-                )
+                messages.map(msg => {
+                    const messageWithUser = {
+                        ...msg,
+                        userId: this.userId,
+                        sendAttempts: msg.sendAttempts || 0,
+                        maxRetries: msg.maxRetries || 3,
+                        retryDelay: msg.retryDelay || 1000,
+                        deliveryConfirmed: msg.deliveryConfirmed || false,
+                        readConfirmed: msg.readConfirmed || false,
+                        metadata: {
+                            firstSendTime: msg.metadata?.firstSendTime || Date.now(),
+                            errorCount: msg.metadata?.errorCount || 0,
+                            ...msg.metadata
+                        }
+                    };
+                    return tx.store.put(messageWithUser);
+                })
             );
             await tx.done;
 
@@ -108,7 +130,7 @@ export class MessagePersistenceService {
                 await this.updateOrderSession(message);
             }
 
-            console.log(`[MessagePersistence] Saved ${messages.length} messages for orders: ${[...new Set(messages.map(m => m.orderId))].join(', ')}`);
+            console.log(`[MessagePersistence] Saved ${messages.length} messages`);
         } catch (error) {
             console.error('[MessagePersistence] Batch save error:', error);
             throw error;
@@ -116,21 +138,21 @@ export class MessagePersistenceService {
     }
 
     /**
-     * 获取订单的聊天消息
+     * 获取订单的聊天消息 - 按序列号排序
      */
-    async getOrderMessages(orderId: string, limit: number = 50, beforeTimestamp?: number): Promise<P2PMessage[]> {
+    async getOrderMessages(orderId: string, limit: number = 50, beforeSequence?: number): Promise<P2PMessage[]> {
         await this.ensureDb();
 
         try {
-            const index = this.db!.transaction(STORE_NAME).store.index('by-order');
+            const index = this.db!.transaction(STORE_NAME).store.index('by-order-sequence');
 
             let cursor;
-            if (beforeTimestamp) {
-                // 分页查询：获取某个时间点之前的消息
-                cursor = await index.openCursor(IDBKeyRange.bound([orderId, 0], [orderId, beforeTimestamp]));
+            if (beforeSequence) {
+                // 分页查询：获取指定序列号之前的消息
+                cursor = await index.openCursor(IDBKeyRange.upperBound([orderId, beforeSequence]));
             } else {
-                // 普通查询：获取最新的消息
-                cursor = await index.openCursor(IDBKeyRange.bound([orderId, 0], [orderId, Date.now()]), 'prev');
+                // 普通查询：按序列号降序获取最新消息
+                cursor = await index.openCursor(IDBKeyRange.bound([orderId, 0], [orderId, Infinity]), 'prev');
             }
 
             const messages: P2PMessage[] = [];
@@ -144,12 +166,9 @@ export class MessagePersistenceService {
                 cursor = await cursor.continue();
             }
 
-            // 如果分页查询，需要反转顺序（最新的在前）
-            if (!beforeTimestamp) {
-                messages.reverse();
-            }
+            // 按序列号升序排序（最旧的在前面）
+            messages.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
 
-            console.log(`[MessagePersistence] Retrieved ${messages.length} messages for order: ${orderId}`);
             return messages;
 
         } catch (error) {
@@ -168,6 +187,14 @@ export class MessagePersistenceService {
             const index = this.db!.transaction(ORDER_SESSIONS_STORE).store.index('by-user');
             const sessions = await index.getAll(this.userId);
 
+            // 计算重传统计
+            for (const session of sessions) {
+                const stats = await this.calculateOrderStats(session.orderId);
+                session.pendingMessages = stats.pending;
+                session.failedMessages = stats.failed;
+                session.retryQueueSize = stats.retrying;
+            }
+
             return sessions.sort((a, b) => b.lastMessageTime - a.lastMessageTime);
 
         } catch (error) {
@@ -184,7 +211,14 @@ export class MessagePersistenceService {
 
         try {
             const session = await this.db!.get(ORDER_SESSIONS_STORE, orderId);
-            return session && session.userId === this.userId ? session : null;
+            if (session && session.userId === this.userId) {
+                const stats = await this.calculateOrderStats(orderId);
+                session.pendingMessages = stats.pending;
+                session.failedMessages = stats.failed;
+                session.retryQueueSize = stats.retrying;
+                return session;
+            }
+            return null;
         } catch (error) {
             console.error('[MessagePersistence] Get order session error:', error);
             return null;
@@ -202,21 +236,166 @@ export class MessagePersistenceService {
             const isIncoming = message.recipientId === this.userId;
             const isUnread = isIncoming && message.status !== 'read';
 
+            const stats = await this.calculateOrderStats(message.orderId);
+
             const session: OrderSessionInfo = {
                 orderId: message.orderId,
+                userId: this.userId,
                 otherUserId: otherUserId,
                 lastMessageTime: message.timestamp,
                 unreadCount: existingSession ?
                     (isUnread ? existingSession.unreadCount + 1 : existingSession.unreadCount) :
                     (isUnread ? 1 : 0),
                 messageCount: existingSession ? existingSession.messageCount + 1 : 1,
-                userId: this.userId
+                pendingMessages: stats.pending,
+                failedMessages: stats.failed,
+                retryQueueSize: stats.retrying
             };
 
             await this.db!.put(ORDER_SESSIONS_STORE, session);
 
         } catch (error) {
             console.error('[MessagePersistence] Update order session error:', error);
+        }
+    }
+
+    /**
+     * 计算订单的统计信息
+     */
+    private async calculateOrderStats(orderId: string): Promise<{
+        pending: number;
+        failed: number;
+        retrying: number;
+    }> {
+        try {
+            // 使用 by-order-status 索引统计各种状态的消息
+            const index = this.db!.transaction(STORE_NAME).store.index('by-order-status');
+
+            const pendingMessages = await index.getAll([orderId, 'pending']);
+            const pending = pendingMessages.filter(msg =>
+                msg.userId === this.userId && msg.senderId === this.userId
+            ).length;
+
+            const failedMessages = await index.getAll([orderId, 'failed']);
+            const failed = failedMessages.filter(msg =>
+                msg.userId === this.userId && msg.senderId === this.userId
+            ).length;
+
+            const retryingMessages = await index.getAll([orderId, 'retrying']);
+            const retrying = retryingMessages.filter(msg =>
+                msg.userId === this.userId && msg.senderId === this.userId
+            ).length;
+
+            return { pending, failed, retrying };
+
+        } catch (error) {
+            console.error('[MessagePersistence] Calculate order stats error:', error);
+            return { pending: 0, failed: 0, retrying: 0 };
+        }
+    }
+
+    /**
+     * 获取需要重试的消息
+     */
+    async getMessagesForRetry(): Promise<P2PMessage[]> {
+        await this.ensureDb();
+
+        try {
+            const now = Date.now();
+            const index = this.db!.transaction(STORE_NAME).store.index('by-retry-time');
+
+            const messages: P2PMessage[] = [];
+            let cursor = await index.openCursor(IDBKeyRange.upperBound(now));
+
+            while (cursor) {
+                if (cursor.value.userId === this.userId &&
+                    cursor.value.senderId === this.userId &&
+                    cursor.value.status === 'retrying' &&
+                    cursor.value.sendAttempts < cursor.value.maxRetries) {
+                    messages.push(cursor.value);
+                }
+                cursor = await cursor.continue();
+            }
+
+            console.log(`[MessagePersistence] Found ${messages.length} messages ready for retry`);
+            return messages;
+
+        } catch (error) {
+            console.error('[MessagePersistence] Get messages for retry error:', error);
+            return [];
+        }
+    }
+
+    /**
+     * 获取待发送消息
+     */
+    async getPendingOrderMessages(orderId?: string): Promise<P2PMessage[]> {
+        await this.ensureDb();
+
+        try {
+            let messages: P2PMessage[];
+
+            if (orderId) {
+                // 获取特定订单的待发送消息
+                const index = this.db!.transaction(STORE_NAME).store.index('by-order-status');
+                messages = await index.getAll([orderId, 'pending']);
+            } else {
+                // 获取所有待发送消息
+                const index = this.db!.transaction(STORE_NAME).store.index('by-order-status');
+                // 获取所有订单的pending消息，然后过滤
+                const allPending = await index.getAll('pending');
+                messages = allPending.filter(msg => msg.userId === this.userId);
+            }
+
+            return messages.filter(msg =>
+                msg.senderId === this.userId
+            );
+
+        } catch (error) {
+            console.error('[MessagePersistence] Get pending order messages error:', error);
+            return [];
+        }
+    }
+
+    /**
+     * 更新消息重试状态
+     */
+    async updateMessageRetryStatus(
+        messageId: string,
+        updates: {
+            status?: P2PMessage['status'];
+            sendAttempts?: number;
+            lastAttemptTime?: number;
+            nextRetryTime?: number;
+            lastError?: string;
+        }
+    ): Promise<void> {
+        await this.ensureDb();
+
+        try {
+            const message = await this.db!.get(STORE_NAME, messageId);
+            if (message && message.userId === this.userId) {
+                const updatedMessage: P2PMessage = {
+                    ...message,
+                    ...updates,
+                    metadata: {
+                        ...message.metadata,
+                        lastError: updates.lastError,
+                        errorCount: updates.sendAttempts || message.sendAttempts,
+                        finalSendTime: updates.status === 'sent' ? Date.now() : message.metadata?.finalSendTime
+                    }
+                };
+
+                await this.db!.put(STORE_NAME, updatedMessage);
+
+                // 更新订单会话统计
+                await this.updateOrderSession(updatedMessage);
+
+                console.log(`[MessagePersistence] Updated retry status for ${messageId}`);
+            }
+        } catch (error) {
+            console.error('[MessagePersistence] Update retry status error:', error);
+            throw error;
         }
     }
 
@@ -234,6 +413,7 @@ export class MessagePersistenceService {
             while (cursor) {
                 if (cursor.value.userId === this.userId && cursor.value.recipientId === this.userId) {
                     cursor.value.status = 'read';
+                    cursor.value.readConfirmed = true;
                     await cursor.update(cursor.value);
                 }
                 cursor = await cursor.continue();
@@ -255,33 +435,6 @@ export class MessagePersistenceService {
     }
 
     /**
-     * 获取订单的待发送消息
-     */
-    async getPendingOrderMessages(orderId?: string): Promise<P2PMessage[]> {
-        await this.ensureDb();
-
-        try {
-            let messages: P2PMessage[];
-
-            if (orderId) {
-                // 获取特定订单的待发送消息
-                const index = this.db!.transaction(STORE_NAME).store.index('by-order-status');
-                messages = await index.getAll([orderId, 'pending']);
-            } else {
-                // 获取所有待发送消息
-                const index = this.db!.transaction(STORE_NAME).store.index('by-status');
-                messages = await index.getAll('pending');
-            }
-
-            return messages.filter(msg => msg.senderId === this.userId);
-
-        } catch (error) {
-            console.error('[MessagePersistence] Get pending order messages error:', error);
-            return [];
-        }
-    }
-
-    /**
      * 获取订单的未读消息数量
      */
     async getOrderUnreadCount(orderId: string): Promise<number> {
@@ -298,9 +451,20 @@ export class MessagePersistenceService {
         try {
             const message = await this.db!.get(STORE_NAME, messageId);
             if (message && message.userId === this.userId) {
-                message.status = status;
-                await this.db!.put(STORE_NAME, message);
-                console.log(`[MessagePersistence] Updated message ${messageId} status to ${status}`);
+                const updates: Partial<P2PMessage> = {
+                    status,
+                    deliveryConfirmed: status === 'delivered' ? true : message.deliveryConfirmed,
+                    readConfirmed: status === 'read' ? true : message.readConfirmed
+                };
+
+                if (status === 'sent') {
+                    updates.metadata = {
+                        ...message.metadata,
+                        finalSendTime: Date.now()
+                    };
+                }
+
+                await this.updateMessageRetryStatus(messageId, updates);
             }
         } catch (error) {
             console.error('[MessagePersistence] Update status error:', error);
@@ -316,8 +480,8 @@ export class MessagePersistenceService {
 
         try {
             // 删除消息
-            const messageIndex = this.db!.transaction(STORE_NAME, 'readwrite').store.index('by-order');
-            let cursor = await messageIndex.openCursor(IDBKeyRange.only([orderId]));
+            const index = this.db!.transaction(STORE_NAME, 'readwrite').store.index('by-order-sequence');
+            let cursor = await index.openCursor(IDBKeyRange.only([orderId]));
 
             while (cursor) {
                 if (cursor.value.userId === this.userId) {
@@ -329,7 +493,7 @@ export class MessagePersistenceService {
             // 删除订单会话
             await this.db!.delete(ORDER_SESSIONS_STORE, orderId);
 
-            console.log(`[MessagePersistence] Deleted all messages and session for order: ${orderId}`);
+            console.log(`[MessagePersistence] Deleted all messages for order: ${orderId}`);
         } catch (error) {
             console.error('[MessagePersistence] Delete order messages error:', error);
             throw error;
@@ -371,6 +535,23 @@ export class MessagePersistenceService {
     private async ensureDb(): Promise<void> {
         if (!this.db) {
             await this.init();
+        }
+    }
+
+    async generateSequence(orderId: string): Promise<number> {
+        try {
+            // 获取订单的最新消息来确定下一个序列号
+            const latestMessages = await this.getOrderMessages(orderId, 1);
+            if (latestMessages.length === 0) {
+                return 1; // 第一条消息
+            }
+
+            const latestSequence = Math.max(...latestMessages.map(msg => msg.sequence || 0));
+            return latestSequence + 1;
+
+        } catch (error) {
+            console.error('[MessagePersistence] Generate sequence error:', error);
+            return Date.now(); // 降级方案：使用时间戳
         }
     }
 }
