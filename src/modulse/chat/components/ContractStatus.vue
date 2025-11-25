@@ -65,8 +65,8 @@
 import { ref, watch, computed } from "vue";
 import { WarningFilled } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
-import type { orderSignState } from "@/modulse/contracts/types/contract.types";
-import { ContractApiService } from "@/modulse/contracts/services/contract-api.service";
+import type { orderSignState } from "../../contracts/types/contract.types";
+import { ContractApiService } from "../../contracts/services/contract-api.service";
 
 // 组件属性接口
 interface Props {
@@ -78,6 +78,7 @@ interface Props {
 const props = defineProps<Props>();
 const emit = defineEmits<{
   (e: "update:visible", value: boolean): void;
+  (e: "triggerQueryContract");
 }>();
 const dialogVisible = ref(props.visible);
 
@@ -131,6 +132,7 @@ watch(
   (visible) => {
     if (visible) {
       fetchContractName(String(props.contractInfo?.fileId) || "");
+      emit("triggerQueryContract");
     } else {
       // �ر�ʱ��������
       // props.contractInfo = null;

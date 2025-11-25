@@ -8,7 +8,7 @@
       </div>
       <div class="navbar-right">
         <el-badge :value="totalUnreadCount" :hidden="totalUnreadCount === 0">
-          <el-button text>
+          <el-button text @click="user2MockLogin">
             <el-icon><Message /></el-icon>
           </el-button>
         </el-badge>
@@ -50,6 +50,7 @@
             :loading="messagesLoading"
             @load-more="handleLoadMoreMessages"
             @is-agree-contract="handleIsAgreeContract"
+            @download="handleDonloadFile"
           />
           <MessageInput
             :order="activeOrder"
@@ -101,9 +102,10 @@ import MessageInput from "../components/MessageInput.vue";
 import OrderDetail from "../components/OrderDetail.vue";
 import { useChat } from "../composables/useChat";
 import { useOrderList } from "../composables/useOrderList";
-import mockLogin from "@/utils/mockLogin";
+import mockLogin from "../../../utils/mockLogin";
 import type { ChatMessage } from "../types/chat.types";
-import { ContractService } from "@/modulse/contracts/services/contract.service";
+import { ContractService } from "../../contracts/services/contract.service";
+import type { P2PMessage } from "../../signal/types/message.types";
 
 const route = useRoute();
 const router = useRouter();
@@ -122,8 +124,10 @@ const {
 } = useOrderList();
 
 const {
+  EnhancedP2PMessageRouterInstance,
   currentMessages,
   messagesLoading,
+  downLoadFile,
   sendMessage,
   sendFile,
   sendContractFile,
@@ -148,9 +152,6 @@ const userInitial = computed(() => userName.value.charAt(0).toUpperCase());
 const canSendMessage = computed(() => {
   return activeOrder.value?.status === "active";
 });
-const ContractServiceInstance = new ContractService(
-  authStore.user?.id || sessionStorage.getItem("auth_current_user_id") || ""
-);
 
 // 方法
 async function handleOrderSelect(orderId: string) {
@@ -191,6 +192,7 @@ async function handleSendMessage(content: string) {
 
   try {
     await sendMessage(activeOrder.value, content);
+    ElMessage.success("消息发送成功");
   } catch (error: any) {
     ElMessage.error(error.message || "发送失败");
   }
@@ -208,7 +210,16 @@ async function handleSendFile(file: File) {
     ElMessage.error(error.message || "文件发送失败");
   }
 }
+async function handleDonloadFile(message: Extract<ChatMessage, P2PMessage>) {
+  try {
+    const url = await downLoadFile(message);
+    console.log("ccccccc", url);
 
+    ElMessage.success("文件下载成功");
+  } catch (error: any) {
+    ElMessage.error(error.message || "文件下载失败");
+  }
+}
 function handleLoadMoreMessages() {
   if (activeOrder.value) {
     // loadMoreMessages(activeOrder.value.conversationId);
@@ -230,7 +241,8 @@ function handleUserAction(command: string) {
       router.push("/profile");
       break;
     case "settings":
-      router.push("/settings");
+      // router.push("/settings");
+      router.push("/key-test");
       break;
     case "logout":
       localStorage.clear();
@@ -257,14 +269,8 @@ async function handleSendContract(file: File) {
   try {
     const file_res = await sendContractFile(activeOrder.value, file);
     ElMessage.success("合同文件发送成功");
-    const contract_res = await ContractServiceInstance.agreeOderSign(
-      activeOrderId.value,
-      file_res.fileId
-    );
-    ElMessage.success(contract_res.data);
-    console.log("Contract sign response:", contract_res.data);
   } catch (error: any) {
-    ElMessage.error(error.message || "合同文件发送失败");
+    ElMessage.error(error || "合同文件发送失败");
   }
 }
 async function handleIsAgreeContract(isAgree: boolean, message: ChatMessage) {
@@ -284,17 +290,51 @@ async function handleIsAgreeContract(isAgree: boolean, message: ChatMessage) {
   //   ElMessage.error(error.message || "请求失败");
   // }
 }
+function user2MockLogin() {
+  // mockLogin(
+  //   {
+  //     id: "102",
+  //     openId: "openid2",
+  //     userName: "user2",
+  //     tenantId: 101,
+  //   },
+  //   {
+  //     token:
+  //       "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiJvcGVuaWQyIiwidGVuYW50SWQiOjEwMiwiaWQiOjIsImV4cCI6MTc2MzE1OTMxNiwidXNlcm5hbWUiOiJ1c2VyMiJ9.RCRjiOp9mn7Klua29mMbf8pVLQsLw6A8CMeZSUkcZiY",
+  //   }
+  // );
+}
 // 初始化
 onMounted(async () => {
-  mockLogin({
-    id: "10003",
-    openId: "dev-openid",
-    userName: "本地开发",
-    tenantId: 0xdeadbeef,
-  });
+  // mockLogin(
+  //   {
+  //     id: "101",
+  //     openId: "openid1",
+  //     userName: "user1",
+  //     tenantId: 101,
+  //   },
+  //   {
+  //     token:
+  //       "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiJvcGVuaWQxIiwidGVuYW50SWQiOjEwMSwiaWQiOjEsImV4cCI6MTc2MzE1OTMxNiwidXNlcm5hbWUiOiJ1c2VyMSJ9.0IzfTLNn-wiurYT6oVSk09zpYUqeRQ9bhcaMbv9fkPM",
+  //   }
+  // );
+  // mockLogin(
+  //   {
+  //     id: "102",
+  //     openId: "openid2",
+  //     userName: "user2",
+  //     tenantId: 102,
+  //   },
+  //   {
+  //     token:
+  //       "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiJvcGVuaWQyIiwidGVuYW50SWQiOjEwMiwiaWQiOjIsImV4cCI6MTc2MzU2ODQ5NSwidXNlcm5hbWUiOiJ1c2VyMiJ9.kn5z0lkDuf3nL4V-b7MwLmXjbvGWCn0mtT3hFfiLdGo",
+  //   }
+  // );
   console.log("[ChatMain] Component mounted");
 
   await loadOrders();
+  // await
+  await EnhancedP2PMessageRouterInstance.init();
 
   console.log("[ChatMain] Orders loaded:", orders.value.length);
 

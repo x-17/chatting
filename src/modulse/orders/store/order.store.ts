@@ -213,22 +213,37 @@ export const useOrderStore = defineStore("order", {
     },
 
     /**
-     * 更新单个订单的未读数
+     * 更新单个订单的未读数和最后消息信息
      */
-    async updateOrderUnreadCount(orderId: string): Promise<void> {
+    async updateOrderWithMessage(
+      orderId: string,
+      messageInfo: {
+        unreadCount?: number;
+        lastMessageTime?: number;
+        lastMessageContent?: string;
+      }
+    ): Promise<void> {
       try {
-        const apiService = new OrderApiService();
-        const count = await apiService.getOrderUnreadCount(orderId);
-
         const order = this.orders.get(orderId);
         if (order) {
           if (!order.metadata) {
             order.metadata = {};
           }
-          order.metadata.unreadCount = count;
+          // 更新未读数（如果提供）
+          if (messageInfo.unreadCount !== undefined) {
+            order.metadata.unreadCount = messageInfo.unreadCount;
+          }
+          // 更新最后消息时间（如果提供）
+          if (messageInfo.lastMessageTime !== undefined) {
+            order.metadata.lastMessageTime = messageInfo.lastMessageTime;
+          }
+          // 更新最后消息内容（如果提供）
+          if (messageInfo.lastMessageContent !== undefined) {
+            order.metadata.lastMessageContent = messageInfo.lastMessageContent;
+          }
         }
       } catch (error) {
-        console.error("[OrderStore] Update order unread count failed:", error);
+        console.error("[OrderStore] Update order with message failed:", error);
       }
     },
 

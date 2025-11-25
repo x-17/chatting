@@ -27,9 +27,10 @@ export class OrderApiService {
    */
   async createOrder(bssOrderId: number): Promise<string> {
     try {
+      const requestData = { bssOrderId: bssOrderId };
       const response = await this.apiClient.post<ApiResponse<string>>(
         "/order/add",
-        bssOrderId
+        requestData
       );
       return response.data.msg;
     } catch (error) {
@@ -42,8 +43,8 @@ export class OrderApiService {
    */
   async getMyOrders(): Promise<Order[]> {
     try {
-      const response = await this.apiClient.get<ApiResponse<Order[]>>(
-        "/orders/queryOrders"
+      const response = await this.apiClient.post<ApiResponse<Order[]>>(
+        "/order/queryOrders"
       );
       return response.data.data;
     } catch (error) {

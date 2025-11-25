@@ -35,14 +35,14 @@ export interface Order {
   contract: string; //"https://file-server/contract.pdf", 订单关联契约存储url
   //参与方
   participants: OrderParticipant[];
+  // 元数据
+  metadata?: {
+    lastMessageTime?: number;
+    lastMessageContent?: string;
+    unreadCount?: number;
+    [key: string]: any;
+  };
 }
-// 元数据
-//   metadata?: {
-//     lastMessageTime?: number;
-//     lastMessageContent?: string;
-//     unreadCount?: number;
-//     [key: string]: any;
-//   };
 
 // 创建订单的请求参数
 export interface CreateOrderRequest {

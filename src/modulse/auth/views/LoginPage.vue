@@ -191,13 +191,20 @@ const validateEnvironment = () => {
 
 // 处理路由参数
 const handleRouteParams = () => {
-  const orderId = route.query.orderId;
+  const str = route.hash;
+  console.log(route.hash);
+  // const str = "orderId#/sso?orderId=1111&otherParam=xxx"; // 示例字符串，可替换为实际需提取的串
+  const regex = /(?<=orderId=)[^&]+/;
+  const orderId = str.match(regex)?.[0] || "未匹配到orderId";
+  console.log(orderId); // 输出：1111
   if (typeof orderId === "string" && orderId) {
     sessionStorage.setItem("redirect_context_orderId", orderId);
     console.log(`Context saved: orderId = ${orderId}`);
 
     // 显示上下文信息
     showErrorAlert("info", "业务上下文", `订单 ${orderId} 需要登录后继续处理`);
+  } else {
+    console.log("no orderId");
   }
 };
 
@@ -260,8 +267,8 @@ const redirectToSso = async () => {
     }
 
     // 获取配置
-    // const ssoBaseUrl = import.meta.env.VITE_SSO_BASE_URL;
-    const ssoBaseUrl = import.meta.env.VITE_SSO_MOCK_URL; //测试用
+    const ssoBaseUrl = import.meta.env.VITE_SSO_BASE_URL;
+    // const ssoBaseUrl = import.meta.env.VITE_SSO_MOCK_URL; //测试用
     const clientId = import.meta.env.VITE_SSO_CLIENT_ID;
 
     // 生成安全的state参数

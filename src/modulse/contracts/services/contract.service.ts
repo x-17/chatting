@@ -9,6 +9,7 @@ import type {
   ContractParticipant,
 } from "../types/contract.types";
 import type { ApiResponse } from "../../utils/api-client";
+import { getSigningPrivateKey } from "../../signal/services/e2ee.service";
 
 export class ContractService {
   private apiService: ContractApiService;
@@ -271,14 +272,15 @@ export class ContractService {
     orderId: string,
     fileId: string
   ): Promise<ApiResponse<string>> {
-    const fileContent = await this.getBinaryFileByFileId(fileId);
-    if (!fileContent) {
-      throw new Error("无法下载合同文件");
-    }
-    const signature = await e2eeService.signContract(
-      this.myUserId,
-      new Uint8Array(fileContent)
-    );
+    // const fileContent = await this.getBinaryFileByFileId(fileId);
+    // if (!fileContent) {
+    //   throw new Error("无法下载合同文件");
+    // }
+    // const signature = await e2eeService.signContract(
+    //   this.myUserId,
+    //   new Uint8Array(fileContent)
+    // );
+    const signature = await getSigningPrivateKey(this.myUserId);
     return await this.apiService.orderSign({
       orderId: orderId,
       fileId: Number(fileId),

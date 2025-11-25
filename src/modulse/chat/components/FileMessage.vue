@@ -76,7 +76,11 @@
           </template>
         </div>
         <!--  v-if="contractState && !isMine" -->
-        <div class="action-buttons" v-loading="contractLoading">
+        <div
+          class="action-buttons"
+          v-loading="contractLoading"
+          v-if="contractState && !isMine"
+        >
           <el-button
             type="success"
             size="small"
@@ -115,9 +119,9 @@ import {
 } from "@element-plus/icons-vue";
 import { useAuthStore } from "../../auth/services/auth.store";
 import type { ChatMessage } from "../types/chat.types";
-import { useOrderList } from "@/modulse/chat/composables/useOrderList";
+import { useOrderList } from "../../chat/composables/useOrderList";
 import { el } from "element-plus/es/locales.mjs";
-import { ContractService } from "@/modulse/contracts/services/contract.service";
+import { ContractService } from "../../contracts/services/contract.service";
 
 interface Props {
   message: ChatMessage;
@@ -137,7 +141,9 @@ const downloading = ref(false);
 const contractLoading = ref(false);
 let contractState = ref<boolean>(false);
 const contractService = new ContractService(
-  authStore.user?.id || sessionStorage.getItem("auth_current_user_id") || ""
+  authStore.currentUserId ||
+    sessionStorage.getItem("auth_current_user_id") ||
+    ""
 );
 
 const currentUserInitial = computed(
@@ -219,7 +225,7 @@ async function handleContract(params: string) {
     if (params === "agree") {
       const contract_res = await contractService.agreeOderSign(
         props.message.orderId!,
-        props.message.fileId
+        props.message.metadata.fileId
       ); //props.message.fileId!
       ElMessage.success(contract_res.data);
       console.log("Contract sign response:", contract_res.data);

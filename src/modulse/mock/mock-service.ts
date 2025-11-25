@@ -14,7 +14,7 @@ import {
  */
 export const mockService = {
   // 是否启用 Mock
-  enabled: true,
+  enabled: false,
 
   /**
    * 获取我的订单列表

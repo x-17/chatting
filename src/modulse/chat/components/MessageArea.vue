@@ -83,8 +83,9 @@
     <!-- 引入合同状态弹窗 -->
     <ContractStatus
       v-model:visible="isContractDialogVisible"
-      :user-id="currentUserId"
+      :user-id="String(currentUserId)"
       :contract-info="contractInfo"
+      @trigger-query-contract="querycontract"
     />
   </div>
 </template>
@@ -100,11 +101,10 @@ import ContractStatus from "./ContractStatus.vue";
 import type { Order } from "../types/chat.types";
 import type { ChatMessage } from "../types/chat.types";
 import router from "@/router";
-import { ContractApiService } from "@/modulse/contracts/services/contract-api.service";
+import { ContractApiService } from "../../contracts/services/contract-api.service";
 import { ElMessage } from "element-plus";
-import { useChat } from "@/modulse/chat/composables/useChat";
-import { ContractService } from "@/modulse/contracts/services/contract.service";
-import type { orderSignState } from "@/modulse/contracts/types/contract.types";
+import { ContractService } from "../../contracts/services/contract.service";
+import type { orderSignState } from "../../contracts/types/contract.types";
 
 interface Props {
   order: Order;
@@ -115,6 +115,7 @@ interface Props {
 interface Emits {
   (e: "load-more"): void;
   (e: "is-agree-contract", isAgree: boolean, message: ChatMessage): void;
+  (e: "download", message: ChatMessage): void;
 }
 
 const props = defineProps<Props>();
@@ -125,23 +126,17 @@ const scrollbarRef = ref();
 const showScrollToBottom = ref(false);
 const contractNum = ref(0);
 // const contractInfo = ref<orderSignState>(null);
-const contractInfo = ref<orderSignState>({
-  id: 123,
-  orderId: "ORD20250078",
-  fileId: 456,
-  signature: "张三 电子签名",
-  status: 1, // 1-已签署
-  createTime: "2025-11-13 10:30:00",
-  lastSignUserId: 9527,
-});
+const contractInfo = ref<orderSignState>();
 
-const currentUserId = computed(() => authStore.user?.id || "");
+const currentUserId = computed(() => authStore.currentUserId || "");
 const otherPartyInitial = computed(() =>
   props.order.otherParty.name.charAt(0).toUpperCase()
 );
 const isGroupChat = computed(() => props.order.conversationType === "group");
 const ContractServiceInstance = new ContractService(
-  authStore.user?.id || sessionStorage.getItem("auth_current_user_id") || ""
+  authStore.currentUserId ||
+    sessionStorage.getItem("auth_current_user_id") ||
+    ""
 );
 const isContractDialogVisible = ref(false);
 
@@ -188,12 +183,13 @@ function handleShowContracts() {
 function handleDownloadFile(message: ChatMessage) {
   // TODO: 下载文件逻辑
   console.log("Download file:", message);
+  emit("download", message);
 }
 async function handleContract(isAgree: boolean, message: ChatMessage) {
   console.log(isAgree);
   emit("is-agree-contract", isAgree, message);
 }
-onMounted(async () => {
+async function querycontract() {
   try {
     let res = await ContractServiceInstance.queryOrderSignState(props.order.id);
     if (res.code === 1) {
@@ -202,12 +198,18 @@ onMounted(async () => {
         contractNum.value = 1;
       }
     } else {
-      ElMessage.error(res.data as string);
+      console.log(res.data);
+
+      // ElMessage.error(res.data as string);
     }
   } catch (error) {
     console.log(error);
-    ElMessage.error("查询合同状态失败");
+    // ElMessage.error("查询合同状态失败");
   }
+}
+onMounted(async () => {
+  console.log("messageArea is mounted");
+  await querycontract();
 });
 </script>
 

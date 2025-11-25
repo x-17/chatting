@@ -10,6 +10,7 @@ export interface ApiResponse<T> {
 export function createAuthenticatedApiClient(): AxiosInstance {
   const apiClient = axios.create({
     baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:3000",
+    // baseURL: "/api",
     timeout: 30000,
   });
 

@@ -4,6 +4,11 @@ import { ref, computed } from "vue";
 import { useAuthStore } from "../../auth/services/auth.store";
 import { mockService } from "../../mock/mock-service";
 import type { ChatMessage, Order } from "../types/chat.types";
+import { EnhancedP2PMessageRouter } from "../../signal/services/p2p-message-router.enhanced";
+import { MessagePersistenceService } from "../../signal/services/message-persistence.service";
+import type { P2PMessage } from "../../signal/types/message.types";
+import { ElMessage } from "element-plus";
+import { ContractService } from "../../contracts/services/contract.service";
 
 interface ChatState {
   conversations: Map<string, ChatMessage[]>;
@@ -12,8 +17,32 @@ interface ChatState {
 }
 
 export function useChat() {
-  const authStore = useAuthStore();
+  //未读消息
 
+  const saleUnreadCount = ref(0);
+  const purchaseUnreadCount = ref(0);
+  const totalUnreadCount = computed(() => {
+    return saleUnreadCount.value + purchaseUnreadCount.value;
+  });
+  //初始化路由和存储服务
+  const authStore = useAuthStore();
+  const myUserId =
+    authStore.currentUserId ||
+    sessionStorage.getItem("auth_current_user_id") ||
+    "";
+  const EnhancedP2PMessageRouterInstance = new EnhancedP2PMessageRouter(
+    String(myUserId)
+  );
+  const MessagePersistenceServiceInstance = new MessagePersistenceService(
+    String(myUserId)
+  );
+  EnhancedP2PMessageRouterInstance.onMessage(async (message) => {
+    console.log("fffffffffffuck", message);
+
+    const conversationId = message.orderId;
+    addMessageToConversation(conversationId, message);
+  });
+  // 聊天状态
   const state = ref<ChatState>({
     conversations: new Map(),
     loading: new Map(),
@@ -60,7 +89,7 @@ export function useChat() {
           const mockMsgs = await mockService.getP2PMessages(
             order.conversationId
           );
-          console.log("------------------------", mockMsgs);
+          // console.log("------------------------", mockMsgs);
 
           messages = mockMsgs.map((msg) => ({
             ...msg,
@@ -77,6 +106,14 @@ export function useChat() {
         }
 
         console.log("[useChat] Loaded messages:", messages.length);
+      } else {
+        const Msgs = await MessagePersistenceServiceInstance.getOrderMessages(
+          order.id
+        );
+        messages = Msgs.map((msg) => ({
+          ...msg,
+          __conversationType: "p2p" as const,
+        }));
       }
 
       // 按时间排序
@@ -98,37 +135,43 @@ export function useChat() {
   async function sendMessage(order: Order, content: string): Promise<void> {
     console.log("[useChat] Sending message:", content);
 
-    try {
-      const messageId = `msg_${Date.now()}_${Math.random()
-        .toString(36)
-        .substring(2, 9)}`;
-      const myUserId =
-        authStore.user?.id || localStorage.getItem("auth_user_id") || "";
+    const messageId = `msg_${Date.now()}_${Math.random()
+      .toString(36)
+      .substring(2, 9)}`;
+    const myUserId =
+      authStore.currentUserId || localStorage.getItem("auth_user_id") || "";
 
-      // 🔧 Mock 模式：直接添加消息到本地
-      if (mockService.enabled) {
-        const optimisticMessage: ChatMessage = {
-          id: messageId,
-          type: "text",
-          senderId: myUserId,
-          recipientId:
-            order.conversationType === "p2p" ? order.otherParty.id : undefined,
-          groupId:
-            order.conversationType === "group"
-              ? order.conversationId
-              : undefined,
-          content: content,
-          timestamp: Date.now(),
-          status: "sent", // Mock 模式直接显示为已发送
-          __conversationType: order.conversationType,
-        };
-
-        addMessageToConversation(order.conversationId, optimisticMessage);
-        console.log("[useChat] Message sent (mock)");
+    // 🔧 Mock 模式：直接添加消息到本地
+    if (mockService.enabled) {
+      addMessageToConversation(order.conversationId, optimisticMessage);
+      console.log("[useChat] Message sent (mock)");
+    } else {
+      const res = await EnhancedP2PMessageRouterInstance.sendMessage(
+        order.id,
+        content,
+        "text",
+        String(order.otherParty.id)
+      );
+      const optimisticMessage: ChatMessage = {
+        id: messageId,
+        type: "text",
+        senderId: myUserId,
+        orderId: order.id,
+        recipientId:
+          order.conversationType === "p2p" ? order.otherParty.id : undefined,
+        groupId:
+          order.conversationType === "group" ? order.conversationId : undefined,
+        content: content,
+        timestamp: Date.now(),
+        status: res.success ? "sent" : "failed", // Mock 模式直接显示为已发送
+        __conversationType: order.conversationType,
+      };
+      addMessageToConversation(order.conversationId, optimisticMessage);
+      if (!res.success || res.error) {
+        throw new Error(res.error || "文件发送失败（业务错误）");
       }
-    } catch (error) {
-      console.error("[useChat] Send message failed:", error);
-      throw error;
+      // return optimisticMessage; // 返回成功的消息数据
+      console.log("[useChat] Message sent (via P2P router)");
     }
   }
 
@@ -138,43 +181,49 @@ export function useChat() {
   async function sendFile(order: Order, file: File): Promise<ChatMessage> {
     console.log("[useChat] Sending file:", file.name);
 
-    try {
-      const messageId = `msg_${Date.now()}_${Math.random()
-        .toString(36)
-        .substring(2, 9)}`;
-      const myUserId =
-        authStore.user?.id || localStorage.getItem("auth_user_id") || "";
+    const messageId = `msg_${Date.now()}_${Math.random()
+      .toString(36)
+      .substring(2, 9)}`;
+    const myUserId =
+      authStore.currentUserId || localStorage.getItem("auth_user_id") || "";
 
-      // 🔧 Mock 模式：直接添加消息到本地
-      if (mockService.enabled) {
-        const optimisticMessage: ChatMessage = {
-          id: messageId,
-          type: "file",
-          senderId: myUserId,
-          recipientId:
-            order.conversationType === "p2p" ? order.otherParty.id : undefined,
-          groupId:
-            order.conversationType === "group"
-              ? order.conversationId
-              : undefined,
-          content: `[文件] ${file.name}`,
-          timestamp: Date.now(),
-          status: "sent",
-          metadata: {
-            fileName: file.name,
-            fileSize: file.size,
-            mimeType: file.type,
-          },
-          __conversationType: order.conversationType,
-        };
-
-        addMessageToConversation(order.conversationId, optimisticMessage);
-        console.log("[useChat] File sent (mock)");
-        return optimisticMessage;
+    // 🔧 Mock 模式：直接添加消息到本地
+    if (mockService.enabled) {
+      addMessageToConversation(order.conversationId, optimisticMessage);
+      console.log("[useChat] File sent (mock)");
+      return optimisticMessage;
+    } else {
+      let res = await EnhancedP2PMessageRouterInstance.sendFile(
+        order.id,
+        file,
+        String(order.otherParty.id)
+      );
+      const optimisticMessage: ChatMessage = {
+        id: messageId,
+        type: "file",
+        senderId: myUserId,
+        orderId: order.id,
+        recipientId:
+          order.conversationType === "p2p"
+            ? String(order.otherParty.id)
+            : undefined,
+        groupId:
+          order.conversationType === "group" ? order.conversationId : undefined,
+        content: `[文件] ${file.name}`,
+        timestamp: Date.now(),
+        status: res.success ? "sent" : "failed",
+        metadata: {
+          fileName: file.name,
+          fileSize: file.size,
+          mimeType: file.type,
+        },
+        __conversationType: order.conversationType,
+      };
+      addMessageToConversation(order.conversationId, optimisticMessage);
+      if (!res.success || res.error) {
+        throw new Error(res.error || "文件发送失败（业务错误）");
       }
-    } catch (error) {
-      console.error("[useChat] Send file failed:", error);
-      throw error;
+      return optimisticMessage; // 返回成功的消息数据
     }
   }
   /**
@@ -185,47 +234,97 @@ export function useChat() {
     file: File
   ): Promise<ChatMessage> {
     console.log("[useChat] Sending file:", file.name);
+    const messageId = `msg_${Date.now()}_${Math.random()
+      .toString(36)
+      .substring(2, 9)}`;
+    const myUserId =
+      authStore.currentUserId || localStorage.getItem("auth_user_id") || "";
+    const ContractServiceInstance = new ContractService(myUserId);
+    // 🔧 Mock 模式：直接添加消息到本地
+    if (mockService.enabled) {
+      const optimisticMessage: ChatMessage = {
+        id: messageId,
+        type: "contract",
+        orderId: order.id,
+        senderId: myUserId,
+        recipientId:
+          order.conversationType === "p2p" ? order.otherParty.id : undefined,
+        groupId:
+          order.conversationType === "group" ? order.conversationId : undefined,
+        content: `[文件] ${file.name}`,
+        timestamp: Date.now(),
+        status: "sent",
+        metadata: {
+          fileName: file.name,
+          fileSize: file.size,
+          mimeType: file.type,
+        },
+        __conversationType: order.conversationType,
+      };
 
-    try {
-      const messageId = `msg_${Date.now()}_${Math.random()
-        .toString(36)
-        .substring(2, 9)}`;
-      const myUserId =
-        authStore.user?.id || localStorage.getItem("auth_user_id") || "";
-
-      // 🔧 Mock 模式：直接添加消息到本地
-      if (mockService.enabled) {
-        const optimisticMessage: ChatMessage = {
-          id: messageId,
-          type: "contract",
-          orderId: order.id,
-          senderId: myUserId,
-          recipientId:
-            order.conversationType === "p2p" ? order.otherParty.id : undefined,
-          groupId:
-            order.conversationType === "group"
-              ? order.conversationId
-              : undefined,
-          content: `[文件] ${file.name}`,
-          timestamp: Date.now(),
-          status: "sent",
-          metadata: {
-            fileName: file.name,
-            fileSize: file.size,
-            mimeType: file.type,
-          },
-          __conversationType: order.conversationType,
-        };
-
-        addMessageToConversation(order.conversationId, optimisticMessage);
-        console.log("[useChat] File sent (mock)");
-        return optimisticMessage;
+      addMessageToConversation(order.conversationId, optimisticMessage);
+      console.log("[useChat] File sent (mock)");
+      return optimisticMessage;
+    } else {
+      let res = await EnhancedP2PMessageRouterInstance.sendFile(
+        order.id,
+        file,
+        String(order.otherParty.id),
+        "contract"
+      );
+      const optimisticMessage: ChatMessage = {
+        id: messageId,
+        type: "contract",
+        orderId: order.id,
+        senderId: myUserId,
+        recipientId:
+          order.conversationType === "p2p"
+            ? String(order.otherParty.id)
+            : undefined,
+        groupId:
+          order.conversationType === "group" ? order.conversationId : undefined,
+        content: `[文件] ${file.name}`,
+        timestamp: Date.now(),
+        status: res.success ? "sent" : "failed",
+        metadata: {
+          fileName: file.name,
+          fileSize: file.size,
+          mimeType: file.type,
+          fileId: res.success ? res.data.fileId : undefined,
+        },
+        __conversationType: order.conversationType,
+      };
+      const contract_res = await ContractServiceInstance.agreeOderSign(
+        order.id,
+        res.data.fileId
+      );
+      ElMessage.success(contract_res.data);
+      console.log("Contract sign response:", contract_res.data);
+      addMessageToConversation(order.conversationId, optimisticMessage);
+      if (!res.success || res.error) {
+        throw new Error(res.error || "文件发送失败（业务错误）");
       }
-    } catch (error) {
-      console.error("[useChat] Send file failed:", error);
-      throw error;
+      return optimisticMessage; // 返回成功的消息数据
     }
   }
+
+  /**
+   * 下载文件
+   */
+  async function downLoadFile(
+    message: Extract<ChatMessage, P2PMessage>
+  ): Promise<string> {
+    const res = await EnhancedP2PMessageRouterInstance.downloadOrderFile(
+      message
+    );
+    if (!res.success || res.error) {
+      throw new Error(res.error || "文件发送失败（业务错误）");
+    }
+    if (res.success) {
+      return res.data.downloadUrl; // 返回成功的消息数据
+    }
+  }
+
   /**
    * 加载更多历史消息
    */
@@ -249,6 +348,9 @@ export function useChat() {
       messages[index] = message;
     } else {
       messages.push(message);
+      // if (message.senderId == myUserId) {
+      //   totalUnreadCount.value += 1;
+      // }
     }
 
     messages.sort((a, b) => a.timestamp - b.timestamp);
@@ -284,8 +386,10 @@ export function useChat() {
   }
 
   return {
+    EnhancedP2PMessageRouterInstance,
     currentMessages,
     messagesLoading,
+    downLoadFile,
     loadConversationMessages,
     loadMoreMessages,
     sendMessage,

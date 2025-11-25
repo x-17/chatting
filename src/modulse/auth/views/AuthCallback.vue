@@ -94,8 +94,9 @@ watch(
       const bssOrderId = orderId ? Number(orderId) : 0;
       if (!bssOrderId) {
         ElMessage.error("订单注册失败:无效的订单ID");
-        router.replace("/login-failed"); //跳转到统一错误页面
-        return;
+        // router.replace("/login-failed"); //跳转到统一错误页面
+        router.replace("/chat");
+        return true;
       }
       (async () => {
         const creating = ElLoading.service({
@@ -106,7 +107,7 @@ watch(
           const msg = await orderApi.createOrder(bssOrderId);
           ElMessage.success(msg || "订单创建成功");
           sessionStorage.removeItem("redirect_context_orderId");
-          router.replace("/");
+          router.replace("/chat");
         } catch (err: any) {
           ElMessage.error("订单创建失败：" + (err?.message || "未知错误"));
           router.replace("/login-failed"); //跳转到统一错误页面

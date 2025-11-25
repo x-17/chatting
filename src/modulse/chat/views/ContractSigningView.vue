@@ -7,9 +7,9 @@
       <h2>合同签署</h2>
       <div class="header-actions">
         <el-button
-            v-if="contract && canVerify"
-            :icon="ShieldCheck"
-            @click="handleVerify"
+          v-if="contract && canVerify"
+          :icon="DocumentChecked"
+          @click="handleVerify"
         >
           验证签名
         </el-button>
@@ -44,10 +44,10 @@
           <!-- 文件预览区 -->
           <div class="document-viewer">
             <iframe
-                v-if="contract.fileId"
-                :src="filePreviewUrl"
-                class="file-iframe"
-                frameborder="0"
+              v-if="contract.fileId"
+              :src="filePreviewUrl"
+              class="file-iframe"
+              frameborder="0"
             />
             <div v-else class="text-content">
               <pre>{{ contract.content }}</pre>
@@ -59,11 +59,7 @@
             <div class="file-info">
               <el-icon><Document /></el-icon>
               <span>文件哈希: {{ contract.fileHash.substring(0, 16) }}...</span>
-              <el-button
-                  text
-                  size="small"
-                  @click="copyFileHash"
-              >
+              <el-button text size="small" @click="copyFileHash">
                 复制完整哈希
               </el-button>
             </div>
@@ -85,19 +81,27 @@
           </template>
 
           <el-steps
-              direction="vertical"
-              :active="contract.currentSignerIndex"
-              finish-status="success"
+            direction="vertical"
+            :active="contract.currentSignerIndex"
+            finish-status="success"
           >
             <el-step
-                v-for="(participant, index) in contract.participants"
-                :key="participant.userId"
+              v-for="(participant, index) in contract.participants"
+              :key="participant.userId"
             >
               <template #icon>
-                <el-icon v-if="participant.hasSigned" color="#67C23A" :size="20">
+                <el-icon
+                  v-if="participant.hasSigned"
+                  color="#67C23A"
+                  :size="20"
+                >
                   <CircleCheckFilled />
                 </el-icon>
-                <el-icon v-else-if="index === contract.currentSignerIndex" color="#409EFF" :size="20">
+                <el-icon
+                  v-else-if="index === contract.currentSignerIndex"
+                  color="#409EFF"
+                  :size="20"
+                >
                   <EditPen />
                 </el-icon>
                 <el-icon v-else color="#C0C4CC" :size="20">
@@ -107,13 +111,17 @@
 
               <template #title>
                 <div class="step-title">
-                  <span class="order-number">{{ participant.signatureOrder }}</span>
-                  <span class="participant-name">{{ participant.userName }}</span>
+                  <span class="order-number">{{
+                    participant.signatureOrder
+                  }}</span>
+                  <span class="participant-name">{{
+                    participant.userName
+                  }}</span>
                   <el-tag
-                      :type="participant.role === 'buyer' ? 'primary' : 'success'"
-                      size="small"
+                    :type="participant.role === 'buyer' ? 'primary' : 'success'"
+                    size="small"
                   >
-                    {{ participant.role === 'buyer' ? '买方' : '卖方' }}
+                    {{ participant.role === "buyer" ? "买方" : "卖方" }}
                   </el-tag>
                 </div>
               </template>
@@ -125,9 +133,13 @@
                   </div>
                   <div v-if="participant.hasSigned" class="signed-info">
                     <el-icon color="#67C23A"><Check /></el-icon>
-                    已签署于 {{ formatDateTime(participant.signatureRecord!.signedAt) }}
+                    已签署于
+                    {{ formatDateTime(participant.signatureRecord!.signedAt) }}
                   </div>
-                  <div v-else-if="index === contract.currentSignerIndex" class="waiting-info">
+                  <div
+                    v-else-if="index === contract.currentSignerIndex"
+                    class="waiting-info"
+                  >
                     <el-icon color="#E6A23C"><Timer /></el-icon>
                     等待签署
                   </div>
@@ -145,10 +157,10 @@
           <!-- 当前轮到自己签署 -->
           <template v-if="isMyTurn && !alreadySigned">
             <el-alert
-                title="请仔细阅读合同"
-                type="warning"
-                :closable="false"
-                show-icon
+              title="请仔细阅读合同"
+              type="warning"
+              :closable="false"
+              show-icon
             >
               签署后将生成不可篡改的数字签名，请确保您同意合同所有条款
             </el-alert>
@@ -166,12 +178,12 @@
             </div>
 
             <el-button
-                type="primary"
-                size="large"
-                :disabled="!canSign"
-                :loading="signing"
-                @click="handleSign"
-                block
+              type="primary"
+              size="large"
+              :disabled="!canSign"
+              :loading="signing"
+              @click="handleSign"
+              block
             >
               <el-icon><EditPen /></el-icon>
               确认签署
@@ -181,10 +193,10 @@
           <!-- 等待其他人签署 -->
           <template v-else-if="!isMyTurn && !alreadySigned">
             <el-alert
-                :title="`当前轮到 ${currentSigner?.userName} 签署`"
-                type="info"
-                :closable="false"
-                show-icon
+              :title="`当前轮到 ${currentSigner?.userName} 签署`"
+              type="info"
+              :closable="false"
+              show-icon
             >
               请等待对方完成签署
             </el-alert>
@@ -192,10 +204,7 @@
 
           <!-- 已经签署 -->
           <template v-else-if="alreadySigned">
-            <el-result
-                icon="success"
-                title="您已完成签署"
-            >
+            <el-result icon="success" title="您已完成签署">
               <template #sub-title>
                 签署时间: {{ formatDateTime(mySignatureRecord?.signedAt || 0) }}
               </template>
@@ -210,26 +219,20 @@
           <!-- 合同已完成 -->
           <template v-if="contract.status === 'completed'">
             <el-divider />
-            <el-result
-                icon="success"
-                title="合同签署完成"
-            >
+            <el-result icon="success" title="合同签署完成">
               <template #sub-title>
                 所有参与方已完成签署，合同正式生效
               </template>
               <template #extra>
                 <el-space>
                   <el-button
-                      type="primary"
-                      :icon="Download"
-                      @click="handleDownloadContract"
+                    type="primary"
+                    :icon="Download"
+                    @click="handleDownloadContract"
                   >
                     下载合同
                   </el-button>
-                  <el-button
-                      :icon="ShieldCheck"
-                      @click="handleVerify"
-                  >
+                  <el-button :icon="DocumentChecked" @click="handleVerify">
                     验证签名
                   </el-button>
                 </el-space>
@@ -240,11 +243,11 @@
 
         <!-- 过期提示 -->
         <el-alert
-            v-if="isExpired"
-            title="合同已过期"
-            type="error"
-            :closable="false"
-            show-icon
+          v-if="isExpired"
+          title="合同已过期"
+          type="error"
+          :closable="false"
+          show-icon
         >
           过期时间: {{ formatDateTime(contract.expiresAt!) }}
         </el-alert>
@@ -253,11 +256,7 @@
 
     <!-- 加载失败 -->
     <div v-else class="error-container">
-      <el-result
-          icon="error"
-          title="加载失败"
-          sub-title="无法加载合同信息"
-      >
+      <el-result icon="error" title="加载失败" sub-title="无法加载合同信息">
         <template #extra>
           <el-button type="primary" @click="loadContract">重试</el-button>
         </template>
@@ -265,11 +264,7 @@
     </div>
 
     <!-- 签名验证对话框 -->
-    <el-dialog
-        v-model="showVerifyDialog"
-        title="签名验证结果"
-        width="600px"
-    >
+    <el-dialog v-model="showVerifyDialog" title="签名验证结果" width="600px">
       <div v-if="verifying" class="verify-loading">
         <el-icon class="is-loading" :size="32"><Loading /></el-icon>
         <p>正在验证签名...</p>
@@ -278,14 +273,17 @@
       <div v-else-if="verifyResult" class="verify-result">
         <!-- 整体验证结果 -->
         <el-result
-            :icon="verifyResult.isValid ? 'success' : 'error'"
-            :title="verifyResult.isValid ? '验证通过' : '验证失败'"
+          :icon="verifyResult.isValid ? 'success' : 'error'"
+          :title="verifyResult.isValid ? '验证通过' : '验证失败'"
         >
           <template #sub-title>
             <div class="verify-summary">
-              <div>文件完整性:
-                <el-tag :type="verifyResult.fileIntegrity ? 'success' : 'danger'">
-                  {{ verifyResult.fileIntegrity ? '完整' : '已被篡改' }}
+              <div>
+                文件完整性:
+                <el-tag
+                  :type="verifyResult.fileIntegrity ? 'success' : 'danger'"
+                >
+                  {{ verifyResult.fileIntegrity ? "完整" : "已被篡改" }}
                 </el-tag>
               </div>
             </div>
@@ -301,7 +299,7 @@
             <el-table-column label="验证结果" align="center">
               <template #default="{ row }">
                 <el-tag :type="row.isValid ? 'success' : 'danger'">
-                  {{ row.isValid ? '有效' : '无效' }}
+                  {{ row.isValid ? "有效" : "无效" }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -317,9 +315,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ref, computed, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { ElMessage, ElMessageBox } from "element-plus";
 import {
   ArrowLeft,
   Loading,
@@ -330,11 +328,12 @@ import {
   Check,
   Timer,
   Download,
-  ShieldCheck
-} from '@element-plus/icons-vue';
-import { useAuthStore } from '../../auth/services/auth.store';
-import { getContractService } from '../../contracts/services/contract.service';
-import type { Contract } from '../../contracts/types/contract.types';
+  // DocumentChecked,
+  DocumentChecked,
+} from "@element-plus/icons-vue";
+import { useAuthStore } from "../../auth/services/auth.store";
+import { getContractService } from "../../contracts/services/contract.service";
+import type { Contract } from "../../contracts/types/contract.types";
 
 const route = useRoute();
 const router = useRouter();
@@ -352,56 +351,61 @@ const confirmRead = ref(false);
 const confirmAgree = ref(false);
 const confirmLegal = ref(false);
 
-const contractService = computed(() =>
-    getContractService(authStore.user!.id)
-);
+const contractService = computed(() => getContractService(authStore.user!.id));
 
 const filePreviewUrl = computed(() =>
-    contract.value?.fileId
-        ? `/api/contracts/files/${contract.value.fileId}/preview`
-        : ''
+  contract.value?.fileId
+    ? `/api/contracts/files/${contract.value.fileId}/preview`
+    : ""
 );
 
 const statusTagType = computed(() => {
   const typeMap: Record<string, any> = {
-    completed: 'success',
-    signing: 'warning',
-    pending_signatures: 'warning',
-    rejected: 'danger',
-    expired: 'info'
+    completed: "success",
+    signing: "warning",
+    pending_signatures: "warning",
+    rejected: "danger",
+    expired: "info",
   };
-  return typeMap[contract.value?.status || ''] || 'info';
+  return typeMap[contract.value?.status || ""] || "info";
 });
 
 const statusText = computed(() => {
   const textMap: Record<string, string> = {
-    draft: '草稿',
-    pending_signatures: '待签署',
-    signing: '签署中',
-    completed: '已完成',
-    rejected: '已拒绝',
-    expired: '已过期'
+    draft: "草稿",
+    pending_signatures: "待签署",
+    signing: "签署中",
+    completed: "已完成",
+    rejected: "已拒绝",
+    expired: "已过期",
   };
-  return textMap[contract.value?.status || ''] || '未知';
+  return textMap[contract.value?.status || ""] || "未知";
 });
 
-const currentSigner = computed(() =>
-    contract.value?.participants[contract.value.currentSignerIndex]
+const currentSigner = computed(
+  () => contract.value?.participants[contract.value.currentSignerIndex]
 );
 
-const isMyTurn = computed(() =>
-    currentSigner.value?.userId === authStore.user?.id
+const isMyTurn = computed(
+  () => currentSigner.value?.userId === authStore.currentUserId
 );
 
-const alreadySigned = computed(() =>
-    contract.value?.participants.find(p => p.userId === authStore.user?.id)?.hasSigned || false
+const alreadySigned = computed(
+  () =>
+    contract.value?.participants.find(
+      (p) => p.userId === authStore.currentUserId
+    )?.hasSigned || false
 );
 
-const mySignatureRecord = computed(() =>
-    contract.value?.participants.find(p => p.userId === authStore.user?.id)?.signatureRecord
+const mySignatureRecord = computed(
+  () =>
+    contract.value?.participants.find(
+      (p) => p.userId === authStore.currentUserId
+    )?.signatureRecord
 );
 
-const canSign = computed(() =>
+const canSign = computed(
+  () =>
     isMyTurn.value &&
     confirmRead.value &&
     confirmAgree.value &&
@@ -409,12 +413,10 @@ const canSign = computed(() =>
     !alreadySigned.value
 );
 
-const canVerify = computed(() =>
-    contract.value?.status === 'completed'
-);
+const canVerify = computed(() => contract.value?.status === "completed");
 
-const isExpired = computed(() =>
-    contract.value?.expiresAt && Date.now() > contract.value.expiresAt
+const isExpired = computed(
+  () => contract.value?.expiresAt && Date.now() > contract.value.expiresAt
 );
 
 onMounted(async () => {
@@ -427,7 +429,7 @@ async function loadContract() {
     const contractId = route.params.id as string;
     contract.value = await contractService.value.getContract(contractId);
   } catch (error: any) {
-    ElMessage.error('加载合同失败: ' + error.message);
+    ElMessage.error("加载合同失败: " + error.message);
   } finally {
     loading.value = false;
   }
@@ -438,13 +440,13 @@ async function handleSign() {
 
   try {
     const confirmed = await ElMessageBox.confirm(
-        '确认签署此合同？签署后将无法撤销。',
-        '确认签署',
-        {
-          confirmButtonText: '确认签署',
-          cancelButtonText: '取消',
-          type: 'warning'
-        }
+      "确认签署此合同？签署后将无法撤销。",
+      "确认签署",
+      {
+        confirmButtonText: "确认签署",
+        cancelButtonText: "取消",
+        type: "warning",
+      }
     );
 
     if (!confirmed) return;
@@ -455,22 +457,21 @@ async function handleSign() {
 
     contract.value = result.contract;
 
-    ElMessage.success('签署成功');
+    ElMessage.success("签署成功");
 
     if (result.isCompleted) {
       await ElMessageBox.alert(
-          '所有参与方已完成签署，合同正式生效！',
-          '签署完成',
-          {
-            confirmButtonText: '知道了',
-            type: 'success'
-          }
+        "所有参与方已完成签署，合同正式生效！",
+        "签署完成",
+        {
+          confirmButtonText: "知道了",
+          type: "success",
+        }
       );
     }
-
   } catch (error: any) {
-    if (error !== 'cancel') {
-      ElMessage.error(error.message || '签署失败');
+    if (error !== "cancel") {
+      ElMessage.error(error.message || "签署失败");
     }
   } finally {
     signing.value = false;
@@ -485,17 +486,18 @@ async function handleVerify() {
   verifyResult.value = null;
 
   try {
-    const result = await contractService.value.verifyContract(contract.value.id);
+    const result = await contractService.value.verifyContract(
+      contract.value.id
+    );
     verifyResult.value = result;
 
     if (result.isValid) {
-      ElMessage.success('验证通过，合同有效');
+      ElMessage.success("验证通过，合同有效");
     } else {
-      ElMessage.error('验证失败，签名无效');
+      ElMessage.error("验证失败，签名无效");
     }
-
   } catch (error: any) {
-    ElMessage.error('验证失败: ' + error.message);
+    ElMessage.error("验证失败: " + error.message);
   } finally {
     verifying.value = false;
   }
@@ -503,27 +505,27 @@ async function handleVerify() {
 
 function handleDownloadContract() {
   if (!contract.value?.fileId) {
-    ElMessage.warning('无法下载，合同没有文件');
+    ElMessage.warning("无法下载，合同没有文件");
     return;
   }
 
   const url = `/api/contracts/files/${contract.value.fileId}/download`;
-  window.open(url, '_blank');
+  window.open(url, "_blank");
 }
 
 function handleViewMySignature() {
   if (!mySignatureRecord.value) return;
 
   ElMessageBox.alert(
-      `
+    `
     签署时间: ${formatDateTime(mySignatureRecord.value.signedAt)}
-    IP地址: ${mySignatureRecord.value.ipAddress || '未记录'}
-    设备: ${mySignatureRecord.value.deviceInfo || '未记录'}
+    IP地址: ${mySignatureRecord.value.ipAddress || "未记录"}
+    设备: ${mySignatureRecord.value.deviceInfo || "未记录"}
     `,
-      '我的签名详情',
-      {
-        confirmButtonText: '关闭'
-      }
+    "我的签名详情",
+    {
+      confirmButtonText: "关闭",
+    }
   );
 }
 
@@ -531,13 +533,13 @@ function copyFileHash() {
   if (!contract.value) return;
 
   navigator.clipboard.writeText(contract.value.fileHash);
-  ElMessage.success('文件哈希已复制');
+  ElMessage.success("文件哈希已复制");
 }
 
 function formatDateTime(timestamp: number): string {
-  if (!timestamp) return '';
+  if (!timestamp) return "";
   const date = new Date(timestamp);
-  return date.toLocaleString('zh-CN');
+  return date.toLocaleString("zh-CN");
 }
 
 function handleBack() {

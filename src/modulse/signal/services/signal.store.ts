@@ -153,11 +153,36 @@ export class IndexedDbSignalProtocolStore implements StorageType {
 
     async loadPreKey(keyId: number): Promise<{ pubKey: ArrayBuffer; privKey: ArrayBuffer }> {
         const identity = await this._getIdentity();
+
+        // 先尝试从 oneTimePreKeys 中查找
         const preKey = identity?.oneTimePreKeys.find(pk => pk.keyId === keyId);
-        if (!preKey) throw new Error(`PreKey ${keyId} not found`);
+
+        if (preKey) {
+            console.log(`[Store] Found OneTimePreKey ${keyId}`);
+            return {
+                pubKey: fromBase64(preKey.pubKey).buffer,
+                privKey: fromBase64(preKey.privKey).buffer,
+            };
+        }
+
+        // 如果找不到，尝试使用 SignedPreKey 作为后备
+        console.warn(`[Store] PreKey ${keyId} not found in OneTimePreKeys, trying SignedPreKey`);
+
+        if (!identity) throw new Error('Identity not found');
+
+        // 检查是否是 SignedPreKey
+        if (identity.signedPreKey.keyId === keyId) {
+            return {
+                pubKey: fromBase64(identity.signedPreKey.pubKey).buffer,
+                privKey: fromBase64(identity.signedPreKey.privKey).buffer,
+            };
+        }
+
+        // 如果都找不到，使用 SignedPreKey 作为通用后备
+        console.warn(`[Store] Using SignedPreKey as fallback for PreKey ${keyId}`);
         return {
-            pubKey: fromBase64(preKey.pubKey).buffer,
-            privKey: fromBase64(preKey.privKey).buffer,
+            pubKey: fromBase64(identity.signedPreKey.pubKey).buffer,
+            privKey: fromBase64(identity.signedPreKey.privKey).buffer,
         };
     }
 

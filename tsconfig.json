@@ -1,16 +1,16 @@
 {
   "files": [],
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"]
-    },
-    "types": ["vite/client"],
-    "module": "esnext",
-    "target": "es2020",
-    "moduleResolution": "bundler"
-  },
-  "include": ["src", "vite-env.d.ts"],
+  // "compilerOptions": {
+  //   "baseUrl": ".",
+  //   "paths": {
+  //     "@/*": ["src/*"]
+  //   },
+  //   "types": ["vite/client"],
+  //   "module": "esnext",
+  //   "target": "es2020",
+  //   "moduleResolution": "bundler"
+  // },
+  // "include": ["src", "vite-env.d.ts"],
   "references": [
     { "path": "./tsconfig.app.json" },
     { "path": "./tsconfig.node.json" }

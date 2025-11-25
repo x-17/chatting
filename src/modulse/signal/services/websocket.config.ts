@@ -21,6 +21,11 @@ export interface WebSocketConfig {
     ack: {
         enabled: boolean;           // 是否启用 ACK 确认
         timeout: number;            // ACK 超时时间（毫秒）
+        retry: {
+            enabled: boolean;
+            maxAttempts: number;
+            backoffMultiplier: number;
+        };
     };
 }
 
@@ -41,6 +46,11 @@ export const DEFAULT_WEBSOCKET_CONFIG: WebSocketConfig = {
     ack: {
         enabled: true,
         timeout: 10000,
+        retry: {
+            enabled: true,           // ✅ 启用重传
+            maxAttempts: 3,          // ✅ 最大重试次数
+            backoffMultiplier: 2     // ✅ 退避乘数
+        }
     },
 };
 
@@ -61,6 +71,11 @@ export const PASSIVE_WEBSOCKET_CONFIG: WebSocketConfig = {
     ack: {
         enabled: true,
         timeout: 10000,
+        retry: {
+            enabled: true,           // ✅ 启用重传
+            maxAttempts: 3,          // ✅ 最大重试次数
+            backoffMultiplier: 2     // ✅ 退避乘数
+        }
     },
 };
 

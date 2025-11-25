@@ -49,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { Loading, CircleClose, Check } from "@element-plus/icons-vue";
 import { useAuthStore } from "../../auth/services/auth.store";
 import type { ChatMessage } from "../types/chat.types";
@@ -77,6 +77,10 @@ function formatTime(timestamp: number): string {
   const minutes = date.getMinutes().toString().padStart(2, "0");
   return `${hours}:${minutes}`;
 }
+onMounted(() => {
+  console.log("bubble onmounted");
+  console.log(props.isMine);
+});
 </script>
 
 <style scoped>
