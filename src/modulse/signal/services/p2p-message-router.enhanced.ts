@@ -588,7 +588,7 @@ export class EnhancedP2PMessageRouter {
 
       throw new Error(
         "文件下载失败: " +
-          (error instanceof Error ? error.message : String(error))
+        (error instanceof Error ? error.message : String(error))
       );
     }
   }
@@ -706,8 +706,8 @@ export class EnhancedP2PMessageRouter {
           data.messageType === "file" || "contract"
             ? fileMetadata
             : {
-                ...data.metadata,
-              },
+              ...data.metadata,
+            },
       };
 
       await this.persistence.saveMessage(message);
@@ -726,8 +726,7 @@ export class EnhancedP2PMessageRouter {
     orderId?: string
   ): Promise<{ success: boolean; newMessages: number }> {
     console.log(
-      `[P2PRouter] Syncing offline messages${
-        orderId ? ` for order ${orderId}` : ""
+      `[P2PRouter] Syncing offline messages${orderId ? ` for order ${orderId}` : ""
       }`
     );
 
@@ -755,8 +754,7 @@ export class EnhancedP2PMessageRouter {
     orderId?: string
   ): Promise<{ success: boolean; sentCount: number }> {
     console.log(
-      `[P2PRouter] Retrying pending messages${
-        orderId ? ` for order ${orderId}` : ""
+      `[P2PRouter] Retrying pending messages${orderId ? ` for order ${orderId}` : ""
       }`
     );
     return await this.syncService.retrySendingPendingMessages(orderId);
@@ -1106,7 +1104,7 @@ export class EnhancedP2PMessageRouter {
       // 错误处理保持不变
       throw new Error(
         "文件上传失败: " +
-          (error instanceof Error ? error.message : String(error))
+        (error instanceof Error ? error.message : String(error))
       );
     }
   }
@@ -1184,7 +1182,7 @@ export class EnhancedP2PMessageRouter {
 
       throw new Error(
         "文件下载失败: " +
-          (error instanceof Error ? error.message : String(error))
+        (error instanceof Error ? error.message : String(error))
       );
     }
   }

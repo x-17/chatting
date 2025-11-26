@@ -91,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, reactive } from "vue";
+import { ref, computed, watch, nextTick, onMounted, reactive, onBeforeUpdate } from "vue";
 import { Document, Loading, ArrowDown } from "@element-plus/icons-vue";
 import { useAuthStore } from "../../auth/services/auth.store";
 import MessageBubble from "./MessageBubble.vue";
@@ -199,7 +199,8 @@ async function querycontract() {
       }
     } else {
       console.log(res.data);
-
+      contractInfo.value = {} as  orderSignState;
+        contractNum.value = 0;
       // ElMessage.error(res.data as string);
     }
   } catch (error) {
@@ -207,6 +208,9 @@ async function querycontract() {
     // ElMessage.error("查询合同状态失败");
   }
 }
+onBeforeUpdate(async ()=>{
+  await querycontract()
+})
 onMounted(async () => {
   console.log("messageArea is mounted");
   await querycontract();

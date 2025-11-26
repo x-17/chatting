@@ -318,18 +318,18 @@ onMounted(async () => {
   //       "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiJvcGVuaWQxIiwidGVuYW50SWQiOjEwMSwiaWQiOjEsImV4cCI6MTc2MzE1OTMxNiwidXNlcm5hbWUiOiJ1c2VyMSJ9.0IzfTLNn-wiurYT6oVSk09zpYUqeRQ9bhcaMbv9fkPM",
   //   }
   // );
-  // mockLogin(
-  //   {
-  //     id: "102",
-  //     openId: "openid2",
-  //     userName: "user2",
-  //     tenantId: 102,
-  //   },
-  //   {
-  //     token:
-  //       "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiJvcGVuaWQyIiwidGVuYW50SWQiOjEwMiwiaWQiOjIsImV4cCI6MTc2MzU2ODQ5NSwidXNlcm5hbWUiOiJ1c2VyMiJ9.kn5z0lkDuf3nL4V-b7MwLmXjbvGWCn0mtT3hFfiLdGo",
-  //   }
-  // );
+  mockLogin(
+    {
+      id: "102",
+      openId: "openid2",
+      userName: "user2",
+      tenantId: 102,
+    },
+    {
+      token:
+        "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiJvcGVuaWQyIiwidGVuYW50SWQiOjEwMiwiaWQiOjIsImV4cCI6MTc2NDE2MzMyNSwidXNlcm5hbWUiOiJ1c2VyMiJ9.iLkSRhnR-_5BNjiQygU_j7obwMIfhXtk6uKTBCYiKG4",
+    }
+  );
   console.log("[ChatMain] Component mounted");
 
   await loadOrders();
