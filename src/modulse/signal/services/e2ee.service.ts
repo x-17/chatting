@@ -464,6 +464,27 @@ export const e2eeService = {
     }
   },
 
+  async getSigningKeyPair(userId: string): Promise<{ publicKey: Uint8Array; privateKey: Uint8Array } | undefined> {
+    try {
+      // 从 IndexedDB 读取身份信息
+      const identity = await idbGet<StorableIdentity>(userId, identityDbStore);
+
+      if (!identity || !identity.signingKeyPair) {
+        console.warn(`[E2EE] 未找到用户 ${userId} 的签名密钥`);
+        return undefined;
+      }
+
+      // 将 Base64 转换为 Uint8Array
+      return {
+        publicKey: fromBase64(identity.signingKeyPair.pubKey),
+        privateKey: fromBase64(identity.signingKeyPair.privKey)
+      };
+    } catch (error) {
+      console.error(`[E2EE] 获取签名密钥对失败:`, error);
+      return undefined;
+    }
+  },
+
   // ========== 修改结束 ==========
 
   /**

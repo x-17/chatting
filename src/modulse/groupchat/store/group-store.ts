@@ -4,15 +4,25 @@ import { get, set, del } from 'idb-keyval';
 
 export interface IGroupState {
     orderId: string;
-    members: string[]; // 简化为字符串数组，只存储用户ID
+    members: string[];
     adminId: string;
     createdAt: number;
 }
 
-export const groupStore = {
+export interface IGroupStore {
+    set(groupState: IGroupState): Promise<void>;
+    get(orderId: string): Promise<IGroupState | null>;
+    remove(orderId: string): Promise<void>;
+    addMember(orderId: string, userId: string): Promise<void>;
+    removeMember(orderId: string, userId: string): Promise<void>;
+    isMember(orderId: string, userId: string): Promise<boolean>;
+}
+
+export const groupStore: IGroupStore = {
     /**
-     * 生成存储键
+     * 生成存储键 (内部辅助方法，不暴露在接口中，但在实现中使用)
      */
+    // @ts-ignore: 内部方法，不需要在接口中定义，但在对象字面量中需要实现
     _generateKey(orderId: string): string {
         return `group-${orderId}`;
     },
@@ -21,6 +31,7 @@ export const groupStore = {
      * 创建或更新群组状态
      */
     async set(groupState: IGroupState): Promise<void> {
+        // @ts-ignore
         const key = this._generateKey(groupState.orderId);
         await set(key, groupState);
     },
@@ -29,6 +40,7 @@ export const groupStore = {
      * 获取群组状态
      */
     async get(orderId: string): Promise<IGroupState | null> {
+        // @ts-ignore
         const key = this._generateKey(orderId);
         return await get<IGroupState>(key);
     },
@@ -37,6 +49,7 @@ export const groupStore = {
      * 删除群组状态
      */
     async remove(orderId: string): Promise<void> {
+        // @ts-ignore
         const key = this._generateKey(orderId);
         await del(key);
     },
@@ -47,7 +60,10 @@ export const groupStore = {
     async addMember(orderId: string, userId: string): Promise<void> {
         const groupState = await this.get(orderId);
         if (!groupState) {
-            throw new Error(`Group ${orderId} not found`);
+            // 如果群组不存在，可以选择抛错或者自动创建（取决于业务逻辑）
+            // 这里为了安全起见，如果没有群组数据，则不执行操作
+            console.warn(`[GroupStore] Cannot add member: Group ${orderId} not found`);
+            return;
         }
 
         // 检查成员是否已存在
@@ -63,7 +79,8 @@ export const groupStore = {
     async removeMember(orderId: string, userId: string): Promise<void> {
         const groupState = await this.get(orderId);
         if (!groupState) {
-            throw new Error(`Group ${orderId} not found`);
+            console.warn(`[GroupStore] Cannot remove member: Group ${orderId} not found`);
+            return;
         }
 
         const memberIndex = groupState.members.indexOf(userId);
@@ -78,6 +95,8 @@ export const groupStore = {
      */
     async isMember(orderId: string, userId: string): Promise<boolean> {
         const groupState = await this.get(orderId);
+
+        // 如果群组本地状态不存在，默认视为 false (或者根据需求处理)
         if (!groupState) {
             return false;
         }

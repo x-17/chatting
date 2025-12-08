@@ -135,7 +135,6 @@ export const fileEncryptionService = {
             const originalContent = await this.fileToArrayBuffer(file);
             const checksum = await this.calculateChecksum(originalContent);
 
-            // ✅ 群聊：元数据保持明文（不再使用 Sender Key 预加密）
             const metadata: EncryptedFileMetadata = {
                 originalName: file.name,
                 mimeType: file.type || 'application/octet-stream',

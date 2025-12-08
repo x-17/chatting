@@ -208,9 +208,9 @@ async function querycontract() {
     // ElMessage.error("查询合同状态失败");
   }
 }
-onBeforeUpdate(async ()=>{
-  await querycontract()
-})
+// onBeforeUpdate(async ()=>{
+//   await querycontract()
+// })
 onMounted(async () => {
   console.log("messageArea is mounted");
   await querycontract();

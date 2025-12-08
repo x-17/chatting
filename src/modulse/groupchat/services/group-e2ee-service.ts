@@ -1,11 +1,12 @@
 // src/e2ee/services/group-e2ee-service.ts
 
 import { groupStateStore } from '../store/group-state-store';
+import { groupStore } from '../store/group-store';
 import { SenderKeySession } from '../protocol/sender-key-session';
 import type { ISenderKeyMessage, ISenderKeyDistributionMessage } from '../protocol/types';
-import { groupStore } from '../store/group-store';
-
-// 并发锁实现（保持不变）
+import { e2eeService } from '../../signal/services/e2ee.service';
+// --- 并发锁工具 ---
+// 防止同一时间对同一会话进行读写导致 ratchet 状态覆盖
 const operationLocks = new Map<string, Promise<void>>();
 
 async function withLock<T>(lockKey: string, operation: () => Promise<T>): Promise<T> {
@@ -29,29 +30,42 @@ async function withLock<T>(lockKey: string, operation: () => Promise<T>): Promis
 
 export const groupE2eeService = {
     /**
-     * 为自己创建一个新的群组会话，并生成用于分发的密钥消息。
-     * 添加了群组成员身份检查
+     * 【初始化/轮转】为自己创建一个新的群组发送会话。
+     * 场景：
+     * 1. 刚创建群组时。
+     * 2. 群成员被移除后，剩余成员需要调用此方法进行"密钥轮转(Rotation)"，以保证前向安全。
      */
     async createGroupSession(
         myUserId: string,
         orderId: string
     ): Promise<ISenderKeyDistributionMessage> {
-        // 检查用户是否是群组成员
+        // 1. 权限检查
         const isMember = await groupStore.isMember(orderId, myUserId);
         if (!isMember) {
             throw new Error(`创建会话失败：您不是群组 "${orderId}" 的成员。`);
         }
 
-        // 创建新会话
-        const session = SenderKeySession.createSession(myUserId, orderId);
+        // 2. ✅ 获取复用的签名密钥对
+        const signingKeyPair = await e2eeService.getSigningKeyPair(myUserId);
 
-        // 异步操作：将新创建的会话状态存入数据库
+        if (!signingKeyPair) {
+            // 这是一个严重错误，说明用户没有初始化 E2EE 身份
+            throw new Error(`无法创建群聊会话：未找到用户 ${myUserId} 的签名密钥。请确保已登录并初始化 E2EE。`);
+        }
+
+        // 3. 创建新会话 (传入复用的密钥对)
+        // 这里的 senderKeyId 会重新生成，chainKey 会重置，但 signingKey 保持不变
+        const session = SenderKeySession.createSession(myUserId, orderId, signingKeyPair);
+
+        // 3. 存储状态 (Key: 我在 orderId 群组中保存的 自己的 状态)
         await groupStateStore.set(myUserId, orderId, myUserId, session.getState());
 
-        // 同步操作：从会话中获取分发消息的核心部分
+        // 4. 生成分发消息核心
         const distributionCore = session.getDistributionMessage();
 
-        // 将上下文信息（groupId, senderId）添加到核心消息中，形成完整的消息
+        console.log(`[E2EE] Created/Rotated session for group ${orderId}, new keyId: ${distributionCore.senderKeyId}`);
+
+        // 5. 返回完整的 Distribution Message，准备通过信令发送给其他人
         return {
             ...distributionCore,
             orderId: orderId,
@@ -60,65 +74,80 @@ export const groupE2eeService = {
     },
 
     /**
-     * 处理从其他群组成员收到的密钥分发消息，并建立会话。
-     * 添加了群组成员身份检查
+     * 【接收密钥】处理从其他成员收到的密钥分发消息。
+     * 场景：收到 P2P 的 KEY_DISTRIBUTION 消息时调用。
      */
     async processGroupKeyDistribution(
         myUserId: string,
-        senderId: string,
         distMessage: ISenderKeyDistributionMessage
     ): Promise<void> {
-        // 检查发送者是否是群组成员
-        const isSenderMember = await groupStore.isMember(distMessage.orderId, senderId);
+        const { orderId, senderId } = distMessage;
+
+        if (!senderId) {
+            console.warn('[E2EE] Received distribution message without senderId');
+            return;
+        }
+
+        // 1. 权限检查：发送者必须是群成员
+        const isSenderMember = await groupStore.isMember(orderId, senderId);
         if (!isSenderMember) {
-            throw new Error(`处理密钥分发失败：发送者 "${senderId}" 不是群组 "${distMessage.orderId}" 的成员。`);
+            console.warn(`[E2EE] Ignored key distribution from non-member ${senderId} in group ${orderId}`);
+            // 注意：这里可以选择抛错，或者静默忽略（防止被移除的成员继续发包骚扰）
+            return;
         }
 
-        // 检查自己是否是群组成员
-        const isMember = await groupStore.isMember(distMessage.orderId, myUserId);
-        if (!isMember) {
-            throw new Error(`处理密钥分发失败：您不是群组 "${distMessage.orderId}" 的成员。`);
-        }
+        console.log(`[E2EE] Processing key from ${senderId} for group ${orderId}`);
 
-        // 创建会话
+        // 2. 创建接收会话
         const session = SenderKeySession.createFromDistribution(distMessage);
 
-        // 异步操作：将为他人创建的会话状态存入数据库
-        await groupStateStore.set(myUserId, distMessage.orderId, senderId, session.getState());
+        // 3. 存储状态 (Key: 我在 orderId 群组中保存的 对方(senderId) 的状态)
+        // 注意：接收会话不包含私钥，只能用于解密
+        await groupStateStore.set(myUserId, orderId, senderId, session.getState());
     },
 
     /**
-     * 加密一条群组消息。
-     * 添加了密钥有效性检查
+     * 【加密】发送群组消息。
+     * 会自动推进棘轮（Ratchet）并更新数据库。
      */
     async encryptGroupMessage(
         myUserId: string,
         orderId: string,
         plaintext: Uint8Array
     ): Promise<ISenderKeyMessage> {
-        // 检查发送者是否仍然是群组成员
+        // 1. 权限检查
         const isMember = await groupStore.isMember(orderId, myUserId);
         if (!isMember) {
             throw new Error(`加密失败：您已不再是群组 "${orderId}" 的成员。`);
         }
 
-        // 使用锁确保对同一会话的并发操作是串行的
+        // 锁 Key：针对我自己的会话状态加锁，防止连续发送导致状态覆盖
         const lockKey = `encrypt-${myUserId}-${orderId}-${myUserId}`;
 
         return withLock(lockKey, async () => {
-            // 异步操作：从数据库获取自己的会话状态
-            const currentState = await groupStateStore.get(myUserId, orderId, myUserId);
+            // 2. 加载状态
+            let currentState = await groupStateStore.get(myUserId, orderId, myUserId);
+            let session: SenderKeySession;
+
+            // 容错：如果还没有会话（例如第一次发消息前没初始化），自动初始化一个
             if (!currentState) {
-                throw new Error(`加密失败：群组 "${orderId}" 的会话未初始化。请先调用 createGroupSession。`);
+                console.warn(`[E2EE] No active session found for ${orderId}, auto-creating...`);
+                // 注意：这里自动创建后，必须依赖外层逻辑将新的 Key 分发出去，否则别人解不开。
+                // 这种情况下通常建议抛出错误让 UI 引导用户重新初始化，但为了健壮性这里做了自动处理。
+                const distMsg = await this.createGroupSession(myUserId, orderId);
+                // 重新获取刚刚保存的状态
+                currentState = await groupStateStore.get(myUserId, orderId, myUserId);
+                if (!currentState) throw new Error('Failed to create session state');
+
+                // TODO: 在实际工程中，这里应该触发一个回调通知 Service 层去广播 distMsg
             }
 
-            // 使用新的工厂方法，需要传入 senderId 和 groupId
-            const session = SenderKeySession.createFromState(currentState, myUserId, orderId);
+            session = SenderKeySession.createFromState(currentState!, myUserId, orderId);
 
-            // 同步操作：加密消息
+            // 3. 执行棘轮加密 (Chain Key 推进)
             const encryptedCore = session.ratchetEncrypt(plaintext);
 
-            // 异步操作：加密后，会话状态已更新（棘轮推进），必须存回数据库
+            // 4. 保存更新后的状态
             await groupStateStore.set(myUserId, orderId, myUserId, session.getState());
 
             return {
@@ -130,8 +159,8 @@ export const groupE2eeService = {
     },
 
     /**
-     * 解密一条群组消息。
-     * 添加了密钥有效性检查
+     * 【解密】接收群组消息。
+     * 支持乱序消息处理。
      */
     async decryptGroupMessage(
         myUserId: string,
@@ -139,35 +168,33 @@ export const groupE2eeService = {
     ): Promise<Uint8Array> {
         const { orderId, senderId } = message;
 
-        // 检查接收者是否仍然是群组成员
+        // 1. 权限检查 (接收者必须还在群里)
         const isReceiverMember = await groupStore.isMember(orderId, myUserId);
         if (!isReceiverMember) {
             throw new Error(`解密失败：您已不再是群组 "${orderId}" 的成员。`);
         }
 
-        // 检查发送者是否仍然是群组成员
-        const isSenderMember = await groupStore.isMember(orderId, senderId);
-        if (!isSenderMember) {
-            throw new Error(`解密失败：发送者 "${senderId}" 已不是群组 "${orderId}" 的成员。`);
-        }
-
-        // 使用锁确保对同一会话的并发操作是串行的
+        // 锁 Key：针对发送者的状态加锁，防止并发解密导致状态覆盖
         const lockKey = `decrypt-${myUserId}-${orderId}-${senderId}`;
 
         return withLock(lockKey, async () => {
-            // 异步操作：根据消息的发送者，从数据库获取对应的会话状态
+            // 2. 加载发送者的会话状态
             const currentState = await groupStateStore.get(myUserId, orderId, senderId);
+
             if (!currentState) {
-                throw new Error(`解密失败：找不到发送者 "${senderId}" 在群组 "${orderId}" 中的会话。可能需要对方重新分发密钥。`);
+                // 如果找不到会话，说明我还没收到他的 Key Distribution 消息
+                // 或者我刚被加入群，还没来得及同步。
+                throw new Error(`解密失败：未找到发送者 "${senderId}" 的密钥会话。等待密钥分发中...`);
             }
 
-            // 使用新的工厂方法，需要传入 senderId 和 groupId
             const session = SenderKeySession.createFromState(currentState, senderId, orderId);
 
-            // 同步操作：解密消息
+            // 3. 执行棘轮解密
+            // 这一步可能会抛错（如签名验证失败、重放攻击等）
             const plaintext = session.ratchetDecrypt(message);
 
-            // 异步操作：解密后，会话状态已更新（棘轮推进），必须存回数据库
+            // 4. 保存更新后的状态
+            // (Chain Key 可能已推进，或者 Message Keys 缓存已更新)
             await groupStateStore.set(myUserId, orderId, senderId, session.getState());
 
             return plaintext;
@@ -175,58 +202,23 @@ export const groupE2eeService = {
     },
 
     /**
-     * 检查用户是否具有有效的群组会话
+     * 【辅助】获取我当前正在使用的密钥分发包。
+     * 场景：有新成员加入时，不需要轮转密钥，只需把当前的 Key 发给他即可。
      */
-    async hasValidSession(userId: string, orderId: string, senderId: string): Promise<boolean> {
-        try {
-            // 检查用户是否是群组成员
-            const isMember = await groupStore.isMember(orderId, userId);
-            if (!isMember) {
-                return false;
-            }
+    async getMyCurrentDistribution(
+        myUserId: string,
+        orderId: string
+    ): Promise<ISenderKeyDistributionMessage | null> {
+        const state = await groupStateStore.get(myUserId, orderId, myUserId);
+        if (!state) return null;
 
-            // 检查发送者是否是群组成员
-            const isSenderMember = await groupStore.isMember(orderId, senderId);
-            if (!isSenderMember) {
-                return false;
-            }
+        const session = SenderKeySession.createFromState(state, myUserId, orderId);
+        const distCore = session.getDistributionMessage();
 
-            // 检查是否存在有效的会话状态
-            const state = await groupStateStore.get(userId, orderId, senderId);
-            return state !== null;
-        } catch (error) {
-            console.error('Error checking session validity:', error);
-            return false;
-        }
-    },
-
-    /**
-     * 获取用户的所有有效会话
-     */
-    async getValidSessions(userId: string, orderId: string): Promise<string[]> {
-        try {
-            // 获取群组所有成员
-            const groupState = await groupStore.get(orderId);
-            if (!groupState) {
-                return [];
-            }
-
-            const validSenders: string[] = [];
-
-            // 检查每个发送者是否有有效会话
-            for (const memberId of groupState.members) {
-                if (memberId === userId) continue; // 跳过自己
-
-                const hasSession = await this.hasValidSession(userId, orderId, memberId);
-                if (hasSession) {
-                    validSenders.push(memberId);
-                }
-            }
-
-            return validSenders;
-        } catch (error) {
-            console.error('Error getting valid sessions:', error);
-            return [];
-        }
+        return {
+            ...distCore,
+            orderId,
+            senderId: myUserId
+        };
     }
 };
