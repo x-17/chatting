@@ -1,7 +1,7 @@
 // src/types/group-message.types.ts (或 src/e2ee/types/group-message.types.ts)
 
 export type GroupMessageStatus = 'pending' | 'sent' | 'delivered' | 'failed';
-export type GroupMessageType = 'text' | 'file' | 'image' | 'system' | 'member_joined' | 'member_left';
+export type GroupMessageType = 'text' | 'file' | 'image' | 'keyDist' | 'userIn' | 'userOut';
 
 /**
  * 前端使用的群组消息接口 (UI/本地存储)

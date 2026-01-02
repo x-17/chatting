@@ -18,6 +18,7 @@ import type {
 import type { EncryptedFilePackage } from "../../utils/file-encryption.service";
 import { isProtocolMessage } from "../types/message.types";
 import { OrderApiService } from "../../orders/services/order-api.service";
+import type {ISenderKeyDistributionMessage} from "../../groupchat/protocol/types.ts";
 
 export interface IP2PRouterResponse {
   success: boolean;
@@ -60,7 +61,7 @@ export class EnhancedP2PMessageRouter {
     this.apiService = new P2PApiService();
     this.syncService = new MessageSyncService(userId);
 
-    this.setupWebSocketHandlers();
+    //this.setupWebSocketHandlers();
     this.setupConnectionMonitor();
   }
 
@@ -649,7 +650,7 @@ export class EnhancedP2PMessageRouter {
   /**
    * ✅ 统一处理接收到的消息（离线和在线消息统一处理）
    */
-  private async handleIncomingMessage(data: any): Promise<void> {
+  public async handleIncomingMessage(data: any): Promise<void> {
     try {
       if (isProtocolMessage(data.type)) return;
 
@@ -717,6 +718,188 @@ export class EnhancedP2PMessageRouter {
     } catch (error) {
       console.error("[P2PRouter] Handle message failed:", error);
     }
+  }
+
+  /**
+   * ✅ 发送密钥分发消息（用于群聊密钥同步）
+   *
+   * @param recipientId 接收者用户ID
+   * @param keyDistMsg 密钥分发消息内容
+   * @param orderId 关联的群组订单ID
+   */
+  async sendKeyDistribution(
+      recipientId: string,
+      keyDistMsg: ISenderKeyDistributionMessage,
+      orderId: string
+  ): Promise<IP2PRouterResponse> {
+    const startTime = Date.now();
+    const messageId = this.generateMessageId();
+
+    try {
+      console.log(
+          `[P2PRouter] Sending key distribution for order ${orderId} to ${recipientId}`
+      );
+
+      // 1. 构建密钥分发消息内容
+      const keyContent = {
+        type: 'KEY_DISTRIBUTION',
+        payload: keyDistMsg
+      };
+
+      // 2. ✅ 关键：使用 Signal 加密整个密钥分发消息
+      // 这样可以防止中间人攻击，确保密钥只有目标用户能读取
+      const encryptionResult = await e2eeService.encryptMessage(
+          this.myUserId,
+          recipientId,
+          JSON.stringify(keyContent)
+      );
+
+      if (!encryptionResult.success) {
+        throw new Error(`密钥分发加密失败: ${encryptionResult.error}`);
+      }
+
+      // 3. 构建消息对象（不保存到历史记录）
+      const sequence = await this.generateSequenceForOrder(orderId);
+      const message = {
+        id: messageId,
+        type: 'key_distribution' as const,
+        senderId: this.myUserId,
+        recipientId: recipientId,
+        orderId: orderId,
+        content: JSON.stringify(keyContent),
+        encryptedContent: encryptionResult.ciphertext,
+        timestamp: Math.floor(Date.now()),
+        sequence: sequence,
+      };
+
+      // 4. ✅ 通过 WebSocket 发送
+      let sendSuccess = false;
+      let sendMethod = '';
+
+      if (this.wsManager.isConnected()) {
+        try {
+          await this.wsManager.sendOrderMessage({
+            messageId: messageId,
+            orderId: orderId,
+            recipientId: recipientId,
+            encryptedContent: JSON.stringify(encryptionResult.ciphertext),
+            messageType: 'key_distribution',
+            timestamp: message.timestamp,
+            sequence: sequence,
+            fileId: undefined,
+          });
+
+          sendSuccess = true;
+          sendMethod = 'websocket';
+          console.log(`[P2PRouter] Key distribution sent via WebSocket`);
+        } catch (error) {
+          console.error(`[P2PRouter] WebSocket send failed:`, error);
+        }
+      }
+
+      // 5. ✅ 如果 WebSocket 失败，使用 HTTP（可选）
+      if (!sendSuccess) {
+        // 这里可以添加 HTTP fallback 逻辑
+        throw new Error('密钥分发失败：WebSocket 不可用');
+      }
+
+      return {
+        success: true,
+        data: {
+          messageId,
+          orderId,
+          recipientId,
+          method: sendMethod,
+          keyType: 'sender_key_distribution'
+        },
+        metadata: {
+          timing: Date.now() - startTime,
+          messageType: 'key_distribution'
+        },
+      };
+    } catch (error) {
+      console.error(`[P2PRouter] Send key distribution failed:`, error);
+
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        metadata: { timing: Date.now() - startTime },
+      };
+    }
+  }
+
+  /**
+   * ✅ 处理接收到的密钥分发消息
+   */
+  public async handleKeyDistributionMessage(data: any): Promise<void> {
+    try {
+      console.log('[P2PRouter] Received key distribution message');
+
+      // 1. 解密消息内容
+      const encryptedData = JSON.parse(data.encryptedContent);
+      const decryptionResult = await e2eeService.decryptMessage(
+          this.myUserId,
+          data.senderId.toString(),
+          encryptedData
+      );
+
+      if (!decryptionResult.success || !decryptionResult.content) {
+        console.error(`[P2PRouter] Key decryption failed:`, decryptionResult.error);
+        return;
+      }
+
+      // 2. 解析密钥内容
+      const keyContent = JSON.parse(decryptionResult.content);
+
+      if (keyContent.type !== 'KEY_DISTRIBUTION') {
+        console.warn('[P2PRouter] Invalid key distribution message type');
+        return;
+      }
+
+      // 3. ✅ 触发密钥分发回调（让群聊管理服务处理）
+      this.triggerKeyDistributionHandlers({
+        orderId: data.orderId,
+        senderId: data.senderId.toString(),
+        keyDistributionMessage: keyContent.payload
+      });
+
+      console.log(`[P2PRouter] Key distribution processed for order ${data.orderId}`);
+    } catch (error) {
+      console.error('[P2PRouter] Handle key distribution failed:', error);
+    }
+  }
+
+  // ========== 回调管理 ==========
+
+  private keyDistributionHandlers: Array<(data: {
+    orderId: string;
+    senderId: string;
+    keyDistributionMessage: ISenderKeyDistributionMessage;
+  }) => void> = [];
+
+  /**
+   * ✅ 注册密钥分发回调
+   */
+  onKeyDistribution(callback: (data: {
+    orderId: string;
+    senderId: string;
+    keyDistributionMessage: ISenderKeyDistributionMessage;
+  }) => void): void {
+    this.keyDistributionHandlers.push(callback);
+  }
+
+  private triggerKeyDistributionHandlers(data: {
+    orderId: string;
+    senderId: string;
+    keyDistributionMessage: ISenderKeyDistributionMessage;
+  }): void {
+    this.keyDistributionHandlers.forEach((handler) => {
+      try {
+        handler(data);
+      } catch (error) {
+        console.error('[P2PRouter] Key distribution handler error:', error);
+      }
+    });
   }
 
   /**
@@ -854,19 +1037,23 @@ export class EnhancedP2PMessageRouter {
   /**
    * ✅ 设置 WebSocket 处理器（简化版）
    */
-  private setupWebSocketHandlers(): void {
-    // ✅ 统一处理所有业务消息（不区分离线/在线）
-    this.wsManager.on("order_message", (data) => {
-      console.log("[P2PRouter] Processing message");
-      this.handleIncomingMessage(data);
-    });
-
-    // 连接状态监控
-    this.wsManager.onStatusChange((status) => {
-      console.log(`[P2PRouter] Connection status: ${status}`);
-      this.triggerStatusChange(status);
-    });
-  }
+  // private setupWebSocketHandlers(): void {
+  //   // 统一处理所有业务消息（包括密钥分发）
+  //   this.wsManager.on('order_message', (data) => {
+  //     // ✅ 根据消息类型分发处理
+  //     if (data.messageType === 'key_distribution') {
+  //       this.handleKeyDistributionMessage(data);
+  //     } else {
+  //       this.handleIncomingMessage(data);
+  //     }
+  //   });
+  //
+  //   // 连接状态监控
+  //   this.wsManager.onStatusChange((status) => {
+  //     console.log(`[P2PRouter] Connection status: ${status}`);
+  //     this.triggerStatusChange(status);
+  //   });
+  // }
   /**
    * 处理在线列表更新
    */

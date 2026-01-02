@@ -16,40 +16,67 @@ export class GroupMessageRouter {
     private persistence: GroupMessagePersistenceService;
     private messageHandlers: Array<(msg: GroupMessage) => void> = [];
     private myUserId: string;
+    private isInitialized = false;
 
     constructor(userId: string) {
         this.myUserId = userId;
         this.wsManager = getWebSocketManager(userId);
         this.persistence = new GroupMessagePersistenceService(userId);
-        this.init();
     }
 
-    private async init() {
+    /**
+     * ✅ 初始化路由（用户登录后调用）
+     */
+    async initialize(): Promise<void> {
+        if (this.isInitialized) {
+            console.log('[GroupRouter] Already initialized');
+            return;
+        }
+
         await this.persistence.init();
-        this.setupWebSocketListeners();
+        //this.setupWebSocketListeners();
         this.injectMessageSender();
+        this.setupReconnectionHandler();
+        this.setupP2PKeyDistribution(); // ✅ 新增：设置 P2P 密钥分发监听
+
+        // ✅ 上线时同步所有群组
+        await groupManagementService.syncAllGroupsOnLogin(this.myUserId);
+
+        this.isInitialized = true;
         console.log(`[GroupRouter] Initialized for user ${this.myUserId}`);
     }
 
+    /**
+     * ✅ 注入消息发送器（使用 P2P Router 的密钥分发方法）
+     */
     private injectMessageSender() {
+        const p2pRouter = getEnhancedP2PRouter(this.myUserId);
+
         const senderImplementation: IMessageSender = {
-            // P2P 密钥分发：走 P2P 路由，使用 system 类型隐藏
-            sendToUser: async (targetUserId: string, message: any) => {
-                const p2pRouter = getEnhancedP2PRouter(this.myUserId);
-                await p2pRouter.sendMessage(
-                    'system_key_distribution',
-                    JSON.stringify(message),
-                    'system',
-                    targetUserId
-                );
+            // ✅ P2P 密钥分发：走 P2P Router 的专用方法
+            sendKeyToUser: async (targetUserId: string, orderId: string, distMsg: any) => {
+                try {
+                    const result = await p2pRouter.sendKeyDistribution(
+                        targetUserId,
+                        distMsg,
+                        orderId
+                    );
+
+                    if (!result.success) {
+                        throw new Error(result.error || '密钥分发失败');
+                    }
+
+                    console.log(`[GroupRouter] Key sent to ${targetUserId} for order ${orderId}`);
+                } catch (error) {
+                    console.error(`[GroupRouter] Failed to send key to ${targetUserId}:`, error);
+                    throw error;
+                }
             },
 
-            // 群信令 (Member Joined/Removed)：走 WS，使用 'system' 类型
+            // 群广播（系统信令，不加密，预留的）
             sendToGroup: async (orderId: string, message: any) => {
-                // message 结构: { type: 'MEMBER_JOINED', payload: {...} }
-                // 我们把它序列化放入 content，并标记 type 为 system
                 await this.wsManager.send({
-                    id: `sig_${Date.now()}_${Math.random()}`,
+                    id: this._generateMessageId(),
                     messageType: 'system',
                     orderId: orderId,
                     content: JSON.stringify(message),
@@ -57,7 +84,43 @@ export class GroupMessageRouter {
                 });
             }
         };
+
         groupManagementService.setMessageSender(senderImplementation);
+    }
+
+    /**
+     * ✅ 设置 P2P 密钥分发监听
+     */
+    private setupP2PKeyDistribution() {
+        const p2pRouter = getEnhancedP2PRouter(this.myUserId);
+
+        // ✅ 监听来自 P2P Router 的密钥分发消息
+        p2pRouter.onKeyDistribution(async ({ orderId, senderId, keyDistributionMessage }) => {
+            console.log(
+                `[GroupRouter] Received key distribution from ${senderId} for order ${orderId}`
+            );
+
+            try {
+                await groupManagementService.handleKeyDistributionSignal(
+                    this.myUserId,
+                    keyDistributionMessage
+                );
+            } catch (error) {
+                console.error('[GroupRouter] Failed to process key distribution:', error);
+            }
+        });
+    }
+
+    /**
+     * ✅ 监听重连事件
+     */
+    private setupReconnectionHandler() {
+        this.wsManager.onStatusChange(async (status) => {
+            if (status === 'connected') {
+                console.log('[GroupRouter] WebSocket reconnected');
+                await groupManagementService.onReconnected(this.myUserId);
+            }
+        });
     }
 
     /**
@@ -68,40 +131,33 @@ export class GroupMessageRouter {
     }
 
     /**
-     * ✅ 发送群组文件消息
-     * 1. 加密文件 (Group模式)
-     * 2. 上传到服务器
-     * 3. 发送包含文件元数据的加密消息
+     * 发送群组文件消息
      */
     public async sendGroupFileMessage(orderId: string, file: File): Promise<GroupMessage> {
-        const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        const messageId = this._generateMessageId();
         const timestamp = Date.now();
 
         try {
             // 1. 加密文件
-            // 使用 fileEncryptionService.encryptFileForGroup
             const encryptedPackage = await fileEncryptionService.encryptFileForGroup(
                 file,
                 this.myUserId,
                 orderId
             );
 
-            // 2. 上传加密内容
-            // 这里的 encryptedPackage.encryptedContent 是 ArrayBuffer
+            // 2. 上传
             const blob = new Blob([encryptedPackage.encryptedContent]);
             const serverFileId = await groupApiService.uploadFile(blob, orderId);
 
-            // 3. 构建消息内容 (Metadata)
-
+            // 3. 构建元数据
             const fileMessageContent = JSON.stringify({
-                fileId: serverFileId,           // 服务器返回的 ID
-                localFileId: encryptedPackage.fileId, // 前端生成的 ID
+                fileId: serverFileId,
+                localFileId: encryptedPackage.fileId,
                 metadata: encryptedPackage.metadata,
                 signature: encryptedPackage.signature
             });
 
-            // 4. 发送加密后的 Metadata 消息
-            // 这里复用 _sendGenericMessage，它会负责把 fileMessageContent 进行 SenderKey 加密
+            // 4. 发送
             const sentMessage = await this._sendGenericMessage(orderId, 'file', fileMessageContent, {
                 fileName: file.name,
                 fileSize: file.size,
@@ -117,20 +173,17 @@ export class GroupMessageRouter {
     }
 
     /**
-     * ✅ 下载并解密群组文件
+     * 下载并解密群组文件
      */
     public async downloadGroupFile(message: GroupMessage): Promise<string> {
         try {
             if (message.type !== 'file') throw new Error('Not a file message');
 
-            // 1. 解析消息内容 (这是解密后的明文 JSON)
             const fileInfo = JSON.parse(message.content);
             const { fileId, metadata, signature } = fileInfo;
 
-            // 2. 下载加密文件流
             const encryptedBuffer = await groupApiService.downloadFile(fileId);
 
-            // 3. 组装成 EncryptedFilePackage 供解密服务使用
             const packageToDecrypt: EncryptedFilePackage = {
                 fileId: fileInfo.localFileId,
                 metadata: metadata,
@@ -138,8 +191,6 @@ export class GroupMessageRouter {
                 signature: signature
             };
 
-            // 4. 解密
-            // 使用 fileEncryptionService.decryptGroupFile
             const result = await fileEncryptionService.decryptGroupFile(
                 packageToDecrypt,
                 this.myUserId,
@@ -147,7 +198,6 @@ export class GroupMessageRouter {
                 message.senderId
             );
 
-            // 5. 生成 Blob URL
             return fileEncryptionService.createDownloadUrl(
                 result.content,
                 result.originalName,
@@ -161,7 +211,7 @@ export class GroupMessageRouter {
     }
 
     /**
-     * 通用发送逻辑 (文本/文件元数据)
+     * 通用发送逻辑
      */
     private async _sendGenericMessage(
         orderId: string,
@@ -169,10 +219,9 @@ export class GroupMessageRouter {
         contentString: string,
         extraMetadata: any = {}
     ): Promise<GroupMessage> {
-        const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        const messageId = this._generateMessageId();
         const timestamp = Date.now();
 
-        // 1. 构建本地消息
         const localMessage: GroupMessage = {
             id: messageId,
             type: type,
@@ -187,7 +236,7 @@ export class GroupMessageRouter {
         this.notifyUI(localMessage);
 
         try {
-            // 2. 加密内容 (Sender Key Ratchet)
+            // SenderKey 加密
             const encoder = new TextEncoder();
             const encryptedPackage = await groupE2eeService.encryptGroupMessage(
                 this.myUserId,
@@ -195,17 +244,16 @@ export class GroupMessageRouter {
                 encoder.encode(contentString)
             );
 
-            // 3. 通过 WebSocket 发送
-            // ✅ 使用标准 WebSocketMessage 结构，不新增字段
+            // 发送
             await this.wsManager.send({
-                id: this.wsManager['generateMessageId'] ? this.wsManager['generateMessageId']() : messageId,
-                messageType: type, // 'text' 或 'file'
+                id: messageId,
+                messageType: type,
                 orderId: orderId,
-                encryptedContent: JSON.stringify(encryptedPackage), // 只有加密后的内容上链
+                content: JSON.stringify(encryptedPackage),
                 timestamp: timestamp
             }, { requireAck: true });
 
-            // 4. 更新状态
+            // 更新状态
             await this.persistence.updateMessageStatus(messageId, 'sent');
             localMessage.status = 'sent';
             this.notifyUI(localMessage);
@@ -218,59 +266,61 @@ export class GroupMessageRouter {
         }
     }
 
-    private setupWebSocketListeners() {
-        // 监听通用业务消息 (text/file)
-        const businessTypes = ['text', 'file'];
-        businessTypes.forEach(type => {
-            this.wsManager.on(type, async (data: any) => {
-                // 只有带有 orderId 且 encryptedContent 不为空的才可能是群消息
-                // 注意：P2P 消息也是 text/file，如何区分？
-                // 策略：如果 P2P 消息使用 recipientId，而群消息不使用 (或使用 orderId 查找群组)
-                // 这里假设 wsManager 转发过来的 data 包含 orderId。
-                // *关键*: 我们尝试用 Group Session 解密，如果成功就是群消息；
-                // 或者我们可以约定 WebSocket 层面 P2P 消息必须有 recipientId，群消息没有。
-                if (data.orderId && !data.recipientId) {
-                    await this.handleIncomingGroupMessage(data);
-                }
-            });
-        });
+    /**
+     * ✅ 设置 WebSocket 监听
+     */
+    // private setupWebSocketListeners() {
+    //     // 1. 监听业务消息 (text/file)
+    //     ['text', 'file'].forEach(type => {
+    //         this.wsManager.on(type, async (data: any) => {
+    //             if (data.orderId && !data.recipientId && data.content) {
+    //                 await this.handleIncomingBusinessMessage(data);
+    //             }
+    //         });
+    //     });
+    //
+    //     // 2. ✅ 监听服务器广播：成员加入 (userIn)
+    //     this.wsManager.on('userIn', async (data: any) => {
+    //         if (data.orderId && data.encryptedContent) {
+    //             await this.handleUserInMessage(data);
+    //         }
+    //     });
+    //
+    //     // 3. ✅ 监听服务器广播：成员退出 (userOut)
+    //     this.wsManager.on('userOut', async (data: any) => {
+    //         if (data.orderId && data.encryptedContent) {
+    //             await this.handleUserOutMessage(data);
+    //         }
+    //     });
+    //
+    //     // 4. 监听系统消息（预留）
+    //     this.wsManager.on('system', async (data: any) => {
+    //         if (data.orderId && data.content) {
+    //             await this.handleSystemMessage(data);
+    //         }
+    //     });
+    // }
 
-        // 监听信令 (system)
-        this.wsManager.on('system', async (data: any) => {
-            if (data.orderId && data.content) {
-                // 尝试解析是否为群信令
-                try {
-                    const payload = JSON.parse(data.content);
-                    // 检查 payload 是否包含群信令特征
-                    if (['MEMBER_JOINED', 'MEMBER_REMOVED', 'KEY_DISTRIBUTION'].includes(payload.type)) {
-                        await this.handleIncomingGroupSignal(data.orderId, payload);
-                    }
-                } catch (e) {
-                    // 不是 JSON 或不是群信令，忽略
-                }
-            }
-        });
-    }
-
-    private async handleIncomingGroupMessage(data: any) {
+    /**
+     * 处理业务消息
+     */
+    public async handleIncomingBusinessMessage(data: any) {
         try {
-            const { orderId, senderId, encryptedContent, id, timestamp, messageType } = data;
+            const { orderId, senderId, content, id, timestamp, messageType } = data;
 
-            // 1. SenderKey 解密
-            const encryptedPackage = JSON.parse(encryptedContent);
+            const encryptedPackage: ISenderKeyMessage = JSON.parse(content);
             const plaintextBytes = await groupE2eeService.decryptGroupMessage(
                 this.myUserId,
                 encryptedPackage
             );
-            const content = new TextDecoder().decode(plaintextBytes);
+            const decryptedContent = new TextDecoder().decode(plaintextBytes);
 
-            // 2. 构建消息
             const message: GroupMessage = {
                 id: id || `recv_${Date.now()}`,
-                type: messageType, // 'text' or 'file'
+                type: messageType,
                 orderId: orderId,
                 senderId: senderId,
-                content: content, // 文件消息这里是 JSON 元数据
+                content: decryptedContent,
                 timestamp: timestamp || Date.now(),
                 status: 'delivered'
             };
@@ -279,36 +329,86 @@ export class GroupMessageRouter {
             this.notifyUI(message);
 
         } catch (error) {
-            // 解密失败可能是因为这不是群消息，或者密钥缺失
-            // 静默失败或记录日志，避免干扰 P2P 逻辑
-            // console.debug('[GroupRouter] Decrypt attempt failed:', error);
+            console.error('[GroupRouter] Decrypt business message failed:', error);
         }
     }
 
-    private async handleIncomingGroupSignal(orderId: string, signal: any) {
-        console.log(`[GroupRouter] Signal: ${signal.type} for ${orderId}`);
-        switch (signal.type) {
-            case 'MEMBER_JOINED':
-                await groupManagementService.handleMemberJoinedSignal(this.myUserId, signal.payload);
-                break;
-            case 'MEMBER_REMOVED':
-                await groupManagementService.handleMemberRemovedSignal(this.myUserId, signal.payload);
-                break;
-            case 'KEY_DISTRIBUTION':
-                await groupManagementService.handleKeyDistributionSignal(this.myUserId, signal.payload);
-                break;
+    /**
+     * ✅ 处理 userIn 广播
+     */
+    public async handleUserInMessage(data: any) {
+        try {
+            const { orderId, encryptedContent } = data;
+            const payload = JSON.parse(encryptedContent);
+
+            console.log(`[GroupRouter] Received userIn for order ${orderId}:`, payload);
+
+            await groupManagementService.handleUserInSignal(this.myUserId, payload);
+
+        } catch (error) {
+            console.error('[GroupRouter] Failed to handle userIn:', error);
         }
     }
+
+    /**
+     * ✅ 处理 userOut 广播
+     */
+    public async handleUserOutMessage(data: any) {
+        try {
+            const { orderId, encryptedContent } = data;
+            const payload = JSON.parse(encryptedContent);
+
+            console.log(`[GroupRouter] Received userOut for order ${orderId}:`, payload);
+
+            await groupManagementService.handleUserOutSignal(this.myUserId, payload);
+
+        } catch (error) {
+            console.error('[GroupRouter] Failed to handle userOut:', error);
+        }
+    }
+
+    /**
+     * 处理系统消息（预留）
+     */
+    public async handleSystemMessage(data: any) {
+        try {
+            const { content } = data;
+            const signal = JSON.parse(content);
+
+            // 预留给未来的系统消息
+            console.debug('[GroupRouter] System message:', signal);
+        } catch (e) {
+            console.debug('[GroupRouter] Not a system signal:', e);
+        }
+    }
+
+    // ========== 公共方法 ==========
 
     public onMessage(handler: (msg: GroupMessage) => void) {
         this.messageHandlers.push(handler);
     }
 
-    private notifyUI(msg: GroupMessage) {
-        this.messageHandlers.forEach(h => h(msg));
-    }
-
     public async getHistory(orderId: string, limit?: number) {
         return this.persistence.getGroupMessages(orderId, limit);
     }
+
+    // ========== 辅助方法 ==========
+
+    private _generateMessageId(): string {
+        return `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    }
+
+    private notifyUI(msg: GroupMessage) {
+        this.messageHandlers.forEach(h => h(msg));
+    }
+}
+
+// 工厂函数
+const routerInstances = new Map<string, GroupMessageRouter>();
+
+export function getGroupMessageRouter(userId: string): GroupMessageRouter {
+    if (!routerInstances.has(userId)) {
+        routerInstances.set(userId, new GroupMessageRouter(userId));
+    }
+    return routerInstances.get(userId)!;
 }

@@ -15,7 +15,7 @@ export type MessageType =
   | "file"
   | "image"
   | "system"
-  | "contract"
+  | "contract" | 'key_distribution'  // ✅ 密钥分发消息（P2P）
   // 协议消息类型
   | "ping"
   | "pong"
@@ -95,12 +95,24 @@ export interface OrderSessionInfo {
   orderStatus?: string; // 订单状态(可选)
 }
 
+export interface KeyDistributionContent {
+  type: 'KEY_DISTRIBUTION';
+  payload: {
+    orderId: string;
+    senderId: string;
+    senderKeyId: number;
+    iteration: number;
+    chainKey: string; // Base64
+    signingPublicKey: string; // Base64
+  };
+}
+
 /**
  * ✅ 工具函数: 判断是否为协议消息
  */
 export function isProtocolMessage(messageType: MessageType): boolean {
   return (
-    messageType === "ping" || messageType === "pong" || messageType === "ack"
+    messageType === "ping" || messageType === "pong" || messageType === "ack" || messageType === "key_distribution"
   );
 }
 
@@ -110,7 +122,12 @@ export function isProtocolMessage(messageType: MessageType): boolean {
 export function isBusinessMessage(messageType: MessageType): boolean {
   return !isProtocolMessage(messageType);
 }
-
+/**
+ * ✅ 判断是否为系统广播消息（群聊信令，不加密）
+ */
+export function isSystemBroadcast(type: MessageType): boolean {
+  return ['system', 'userIn', 'userOut'].includes(type);
+}
 /**
  * ✅ 工具函数: 判断是否需要加密
  */
