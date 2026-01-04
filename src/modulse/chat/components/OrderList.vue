@@ -3,18 +3,9 @@
   <div class="order-list">
     <!-- 搜索和过滤 -->
     <div class="list-header">
-      <el-input
-        v-model="searchKeyword"
-        placeholder="搜索订单或对方"
-        :prefix-icon="Search"
-        clearable
-      />
+      <el-input v-model="searchKeyword" placeholder="搜索订单或对方" :prefix-icon="Search" clearable />
       <div class="filter-buttons">
-        <el-button
-          text
-          :type="showUnreadOnly ? 'primary' : 'default'"
-          @click="showUnreadOnly = !showUnreadOnly"
-        >
+        <el-button text :type="showUnreadOnly ? 'primary' : 'default'" @click="showUnreadOnly = !showUnreadOnly">
           <el-badge :value="unreadCount" :hidden="unreadCount === 0">
             仅显示未读
           </el-badge>
@@ -25,11 +16,13 @@
     <!-- 分组列表 -->
     <el-scrollbar class="list-content">
       <!-- 我的购买订单 -->
-      <el-collapse v-model="activeCollapse" accordion>
+      <el-collapse v-model="activeCollapse">
         <el-collapse-item name="purchase-active">
           <template #title>
             <div class="collapse-title">
-              <el-icon color="#409EFF"><ShoppingCart /></el-icon>
+              <el-icon color="#409EFF">
+                <ShoppingCart />
+              </el-icon>
               <span>我的购买</span>
               <el-badge :value="purchaseActiveCount" class="item-badge" />
             </div>
@@ -38,24 +31,13 @@
           <div class="order-group">
             <el-collapse v-model="purchaseSubCollapse">
               <el-collapse-item name="active" title="进行中">
-                <OrderItem
-                  v-for="order in filteredPurchaseActive"
-                  :key="order.id"
-                  :order="order"
-                  :active="activeOrderId === order.id"
-                  @click="handleSelect(order.id)"
-                />
+                <OrderItem v-for="order in filteredPurchaseActive" :key="order.id" :order="order"
+                  :active="activeOrderId === order.id" @click="handleSelect(order.id)" />
               </el-collapse-item>
 
               <el-collapse-item name="completed" title="已完成">
-                <OrderItem
-                  v-for="order in filteredPurchaseCompleted"
-                  :key="order.id"
-                  :order="order"
-                  :active="activeOrderId === order.id"
-                  :completed="true"
-                  @click="handleSelect(order.id)"
-                />
+                <OrderItem v-for="order in filteredPurchaseCompleted" :key="order.id" :order="order"
+                  :active="activeOrderId === order.id" :completed="true" @click="handleSelect(order.id)" />
               </el-collapse-item>
             </el-collapse>
           </div>
@@ -65,7 +47,9 @@
         <el-collapse-item name="sale-active">
           <template #title>
             <div class="collapse-title">
-              <el-icon color="#67C23A"><Sell /></el-icon>
+              <el-icon color="#67C23A">
+                <Sell />
+              </el-icon>
               <span>我的出售</span>
               <el-badge :value="saleActiveCount" class="item-badge" />
             </div>
@@ -74,24 +58,13 @@
           <div class="order-group">
             <el-collapse v-model="saleSubCollapse">
               <el-collapse-item name="active" title="进行中">
-                <OrderItem
-                  v-for="order in filteredSaleActive"
-                  :key="order.id"
-                  :order="order"
-                  :active="activeOrderId === order.id"
-                  @click="handleSelect(order.id)"
-                />
+                <OrderItem v-for="order in filteredSaleActive" :key="order.id" :order="order"
+                  :active="activeOrderId === order.id" @click="handleSelect(order.id)" />
               </el-collapse-item>
 
               <el-collapse-item name="completed" title="已完成">
-                <OrderItem
-                  v-for="order in filteredSaleCompleted"
-                  :key="order.id"
-                  :order="order"
-                  :active="activeOrderId === order.id"
-                  :completed="true"
-                  @click="handleSelect(order.id)"
-                />
+                <OrderItem v-for="order in filteredSaleCompleted" :key="order.id" :order="order"
+                  :active="activeOrderId === order.id" :completed="true" @click="handleSelect(order.id)" />
               </el-collapse-item>
             </el-collapse>
           </div>
@@ -124,11 +97,11 @@ const emit = defineEmits<Emits>();
 
 const searchKeyword = ref("");
 const showUnreadOnly = ref(false);
-const activeCollapse = ref("purchase-active");
+const activeCollapse = ref(["purchase-active", "sale-active"]);
 const purchaseSubCollapse = ref(["active"]);
 const saleSubCollapse = ref(["active"]);
 
-onMounted(async () => {});
+onMounted(async () => { });
 
 // 过滤和分组
 const filteredOrders = computed(() => {

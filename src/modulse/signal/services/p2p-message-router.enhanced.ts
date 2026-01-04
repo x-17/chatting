@@ -463,6 +463,9 @@ export class EnhancedP2PMessageRouter {
   /**
    * 下载订单文件 - 修改为POST方式获取文件内容
    */
+  /**
+   * 下载订单文件 - 修改为POST方式获取文件内容
+   */
   async downloadOrderFile(message: P2PMessage): Promise<IP2PRouterResponse> {
     const startTime = Date.now();
 
@@ -534,6 +537,99 @@ export class EnhancedP2PMessageRouter {
       };
     } catch (error) {
       console.error(`[P2PRouter] Download order file failed:`, error);
+
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        metadata: { timing: Date.now() - startTime },
+      };
+    }
+  }
+
+  /**
+   * 下载订单文件 - 修改为POST方式获取文件内容
+   */
+  async downloadOrderContract(
+    message: P2PMessage,
+    triggerDownload: boolean = true
+  ): Promise<IP2PRouterResponse> {
+    const startTime = Date.now();
+
+    try {
+      if (message.type !== "contract" || !message.metadata?.fileId) {
+        throw new Error("Invalid contract message");
+      }
+
+      console.log(
+        `[P2PRouter] Downloading contract for order ${message.orderId}: ${message.metadata.fileName}`
+      );
+
+      // 1. 解析文件消息
+      const fileMessageData = JSON.parse(message.content);
+      const backendFileId = fileMessageData.fileId; // 后端数字ID
+      const frontendFileId = fileMessageData.frontendFileId; // 前端ID用于进度
+
+      // 2. 使用POST请求获取文件内容
+      const fileContentResponse = await this.postRequestFileContent(
+        backendFileId
+      );
+
+      // 3. 将Base64文件内容转换为ArrayBuffer
+      const encryptedContent = this.base64ToArrayBuffer(
+        fileContentResponse.fileContent
+      );
+
+      // 4. 重建加密包
+      const encryptedPackage: EncryptedFilePackage = {
+        fileId: frontendFileId, // 使用前端ID
+        metadata: fileMessageData.metadata, // 从消息中获取
+        encryptedContent: encryptedContent,
+        signature: fileMessageData.signature, // 从消息中获取
+      };
+
+      // 5. 解密文件
+      const decryptionResult = await fileEncryptionService.decryptP2PFile(
+        encryptedPackage,
+        this.myUserId,
+        message.senderId
+      );
+
+      // 🔧 修正 MIME 类型：如果文件名以 .pdf 结尾，强制使用 application/pdf
+      let mimeType = decryptionResult.mimeType;
+      if (decryptionResult.originalName.toLowerCase().endsWith(".pdf")) {
+        mimeType = "application/pdf";
+      }
+
+      // 6. 创建本地下载链接并触发下载
+      const downloadUrl = fileEncryptionService.createDownloadUrl(
+        decryptionResult.content,
+        decryptionResult.originalName,
+        mimeType
+      );
+
+      if (triggerDownload) {
+        this.triggerFileDownload(downloadUrl, decryptionResult.originalName);
+      }
+
+      console.log(
+        `[P2PRouter] Order contract decrypted and download triggered successfully`
+      );
+
+      return {
+        success: true,
+        data: {
+          fileId: fileMessageData.fileId,
+          fileName: decryptionResult.originalName,
+          mimeType: mimeType,
+          size: decryptionResult.size,
+          downloadUrl: downloadUrl,
+          isVerified: decryptionResult.isVerified,
+          orderId: message.orderId,
+        },
+        metadata: { timing: Date.now() - startTime },
+      };
+    } catch (error) {
+      console.error(`[P2PRouter] Download order contract failed:`, error);
 
       return {
         success: false,

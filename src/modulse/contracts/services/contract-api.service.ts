@@ -7,6 +7,7 @@ import type {
   OrderSignRequest,
   orderSignState,
   fileInfo,
+  UploadOrderQuoteRequest,
 } from "../types/contract.types";
 import type { ApiResponse } from "../../utils/api-client";
 import type { SignRecordResponse } from "../types/contract.types";
@@ -56,31 +57,31 @@ export class ContractApiService {
     });
   }
   /**
-   * ������ͬǩ��
-   * @param params ǩ���������
-   * @returns ǩ����
+   * 订单签署
+   * @param params 签署参数
+   * @returns 签署结果
    */
   async orderSign(params: OrderSignRequest): Promise<ApiResponse<string>> {
     const response = await this.apiClient.post<ApiResponse<string>>(
       "/order/orderSign",
       params
     );
-    return response.data; // ֱ�ӷ�����Ӧ�� data������ apiClient �Ѵ�����Ӧ���أ�
+    return response.data;
   }
   /**
-   * �ܾ�������ͬǩ��
-   * @param params ǩ���������
-   * @returns ǩ����
+   * 拒绝订单签署
+   * @param params 签署参数
+   * @returns 签署结果
    */
   async rejectOrderSign(orderId: string): Promise<ApiResponse<string>> {
     const response = await this.apiClient.post<ApiResponse<string>>(
       "/order/rejectSign",
       { orderId }
     );
-    return response.data; // ֱ�ӷ�����Ӧ�� data������ apiClient �Ѵ�����Ӧ���أ�
+    return response.data;
   }
   /**
-   * ��ѯ������ͬǩ��״̬
+   * 查询订单签署状态
    */
   async queryOrderSignStateApi(orderId: string): Promise<SignRecordResponse> {
     try {
@@ -93,20 +94,19 @@ export class ContractApiService {
       return response.data;
     } catch (error) {
       console.error("[OrderApi] query oderSign state error", error);
-      return error;
+      return error as any;
     }
   }
   /**
-   * ��һ�������ýӿڻ�ȡ�ļ����� URL
-   * @param fileId �ļ� ID
-   * @returns ���� URL��ʧ�ܷ��� null��
+   * 获取文件下载 URL
+   * @param fileId 文件 ID
+   * @returns 下载 URL，失败返回 null
    */
   async getFileDownloadUrl(fileId: string): Promise<string | null> {
     try {
       const response = await this.apiClient.get<ApiResponse<fileInfo>>(
         `/file/${fileId}`
       );
-      // ����ӿڷ��� code=0 Ϊ�ɹ�
       if (response.data.code === 1 && response.data.data.url) {
         return response.data.data.url;
       }
@@ -118,16 +118,15 @@ export class ContractApiService {
     }
   }
   /**
-   * ��һ�������ýӿڻ�ȡ�ļ�����
-   * @param fileId �ļ� ID
-   * @returns Filename��ʧ�ܷ��� null��
+   * 获取文件下载名称
+   * @param fileId 文件 ID
+   * @returns Filename，失败返回 null
    */
   async getFileDownloadName(fileId: string): Promise<string | null> {
     try {
       const response = await this.apiClient.get<ApiResponse<fileInfo>>(
         `/file/${fileId}`
       );
-      // ����ӿڷ��� code=0 Ϊ�ɹ�
       if (response.data.code === 1 && response.data.data.fileName) {
         return response.data.data.fileName;
       }
@@ -146,14 +145,40 @@ export class ContractApiService {
    */
   async downloadBinaryFile(url: string): Promise<ArrayBuffer | null> {
     try {
-      // 直接使用完整的 URL 进行下载
       const response = await this.apiClient.get(url, {
         responseType: "arraybuffer",
       });
-      return response.data; // ���������ݣ�ArrayBuffer ���ͣ�
+      return response.data;
     } catch (error) {
       console.error("文件下载失败", error);
       return null;
     }
+  }
+
+  /**
+   * 上传订单报价信息并签署
+   */
+  async uploadOrderQuote(
+    params: UploadOrderQuoteRequest
+  ): Promise<ApiResponse<string>> {
+    const formData = new FormData();
+    formData.append("orderId", params.orderId);
+    formData.append("amount", String(params.amount));
+    formData.append("usagePeriod", String(params.usagePeriod));
+    formData.append("usageStartTime", params.usageStartTime);
+    formData.append("usageEndTime", params.usageEndTime);
+    formData.append("fileId", String(params.fileId));
+    formData.append("signature", params.signature);
+
+    const response = await this.apiClient.post<ApiResponse<string>>(
+      "/order/uploadOrderQuote",
+      formData,
+      {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      }
+    );
+    return response.data;
   }
 }

@@ -31,10 +31,12 @@
               <Check />
             </el-icon>
             <template v-else-if="message.status === 'read'">
-              <el-icon color="#409EFF"><Check /></el-icon>
-              <el-icon color="#409EFF" style="margin-left: -8px"
-                ><Check
-              /></el-icon>
+              <el-icon color="#409EFF">
+                <Check />
+              </el-icon>
+              <el-icon color="#409EFF" style="margin-left: -8px">
+                <Check />
+              </el-icon>
             </template>
           </template>
         </div>
@@ -78,8 +80,6 @@ function formatTime(timestamp: number): string {
   return `${hours}:${minutes}`;
 }
 onMounted(() => {
-  console.log("bubble onmounted");
-  console.log(props.isMine);
 });
 </script>
 

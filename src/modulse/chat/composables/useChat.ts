@@ -4,8 +4,8 @@ import { ref, computed } from "vue";
 import { useAuthStore } from "../../auth/services/auth.store";
 import { mockService } from "../../mock/mock-service";
 import type { ChatMessage, Order } from "../types/chat.types";
-import { EnhancedP2PMessageRouter } from "../../signal/services/p2p-message-router.enhanced";
-import { MessagePersistenceService } from "../../signal/services/message-persistence.service";
+import { getEnhancedP2PRouter } from "../../signal/services/p2p-message-router.enhanced";
+import { getMessagePersistenceService } from "../../signal/services/message-persistence.service";
 import type { P2PMessage } from "../../signal/types/message.types";
 import { ElMessage } from "element-plus";
 import { ContractService } from "../../contracts/services/contract.service";
@@ -16,40 +16,35 @@ interface ChatState {
   hasMore: Map<string, boolean>;
 }
 
-export function useChat() {
-  //未读消息
+export interface ContractDetails {
+  amount: number;
+  usagePeriod: number;
+  usageStartTime: Date;
+  usageEndTime: Date;
+}
 
-  const saleUnreadCount = ref(0);
-  const purchaseUnreadCount = ref(0);
-  const totalUnreadCount = computed(() => {
-    return saleUnreadCount.value + purchaseUnreadCount.value;
-  });
-  //初始化路由和存储服务
+// 聊天状态
+const state = ref<ChatState>({
+  conversations: new Map(),
+  loading: new Map(),
+  hasMore: new Map(),
+});
+
+const currentConversationId = ref<string | null>(null);
+
+export function useChat() {
   const authStore = useAuthStore();
   const myUserId =
     authStore.currentUserId ||
     sessionStorage.getItem("auth_current_user_id") ||
     "";
-  const EnhancedP2PMessageRouterInstance = new EnhancedP2PMessageRouter(
-    String(myUserId)
-  );
-  const MessagePersistenceServiceInstance = new MessagePersistenceService(
-    String(myUserId)
-  );
-  EnhancedP2PMessageRouterInstance.onMessage(async (message) => {
-    console.log("fffffffffffuck", message);
 
-    const conversationId = message.orderId;
-    addMessageToConversation(conversationId, message);
-  });
-  // 聊天状态
-  const state = ref<ChatState>({
-    conversations: new Map(),
-    loading: new Map(),
-    hasMore: new Map(),
-  });
+  // 使用单例路由
+  const EnhancedP2PMessageRouterInstance = getEnhancedP2PRouter(String(myUserId));
 
-  const currentConversationId = ref<string | null>(null);
+  // 移除 MessagePersistenceService 的初始化，改用 getMessagePersistenceService
+  // 移除 onMessage 监听，由 useMessageHandlers 统一处理
+
 
   const currentMessages = computed(() => {
     if (!currentConversationId.value) return [];
@@ -107,9 +102,20 @@ export function useChat() {
 
         console.log("[useChat] Loaded messages:", messages.length);
       } else {
-        const Msgs = await MessagePersistenceServiceInstance.getOrderMessages(
+        // 重新获取当前用户ID，确保不为空
+        const currentUserId =
+          authStore.currentUserId ||
+          sessionStorage.getItem("auth_current_user_id") ||
+          "";
+
+        // 使用单例持久化服务
+        const persistenceService = getMessagePersistenceService(String(currentUserId));
+
+        const Msgs = await persistenceService.getOrderMessages(
           order.id
         );
+        console.log(Msgs);
+
         messages = Msgs.map((msg) => ({
           ...msg,
           __conversationType: "p2p" as const,
@@ -152,6 +158,8 @@ export function useChat() {
         "text",
         String(order.otherParty.id)
       );
+      console.log("res", res);
+
       const optimisticMessage: ChatMessage = {
         id: messageId,
         type: "text",
@@ -167,12 +175,15 @@ export function useChat() {
         __conversationType: order.conversationType,
       };
       addMessageToConversation(order.conversationId, optimisticMessage);
+      console.log("optimisticMessage", optimisticMessage);
+
       if (!res.success || res.error) {
         throw new Error(res.error || "文件发送失败（业务错误）");
       }
       // return optimisticMessage; // 返回成功的消息数据
       console.log("[useChat] Message sent (via P2P router)");
     }
+
   }
 
   /**
@@ -231,15 +242,18 @@ export function useChat() {
    */
   async function sendContractFile(
     order: Order,
-    file: File
+    file: File,
+    details: ContractDetails
   ): Promise<ChatMessage> {
     console.log("[useChat] Sending file:", file.name);
+    console.log("[useChat] Contract details:", details);
+
     const messageId = `msg_${Date.now()}_${Math.random()
       .toString(36)
       .substring(2, 9)}`;
     const myUserId =
       authStore.currentUserId || localStorage.getItem("auth_user_id") || "";
-    const ContractServiceInstance = new ContractService(myUserId);
+
     // 🔧 Mock 模式：直接添加消息到本地
     if (mockService.enabled) {
       const optimisticMessage: ChatMessage = {
@@ -258,6 +272,7 @@ export function useChat() {
           fileName: file.name,
           fileSize: file.size,
           mimeType: file.type,
+          ...details,
         },
         __conversationType: order.conversationType,
       };
@@ -266,6 +281,7 @@ export function useChat() {
       console.log("[useChat] File sent (mock)");
       return optimisticMessage;
     } else {
+      let ContractServiceInstance = new ContractService(myUserId);
       let res = await EnhancedP2PMessageRouterInstance.sendFile(
         order.id,
         file,
@@ -291,13 +307,29 @@ export function useChat() {
           fileSize: file.size,
           mimeType: file.type,
           fileId: res.success ? res.data.fileId : undefined,
+          ...details,
         },
         __conversationType: order.conversationType,
       };
-      const contract_res = await ContractServiceInstance.agreeOderSign(
-        order.id,
-        res.data.fileId
-      );
+
+      const formatDate = (date: Date) => {
+        const yyyy = date.getFullYear();
+        const MM = String(date.getMonth() + 1).padStart(2, "0");
+        const dd = String(date.getDate()).padStart(2, "0");
+        const HH = String(date.getHours()).padStart(2, "0");
+        const mm = String(date.getMinutes()).padStart(2, "0");
+        const ss = String(date.getSeconds()).padStart(2, "0");
+        return `${yyyy}-${MM}-${dd} ${HH}:${mm}:${ss}`;
+      };
+
+      const contract_res = await ContractServiceInstance.uploadOrderQuote({
+        orderId: order.id,
+        amount: details.amount,
+        usagePeriod: details.usagePeriod,
+        usageStartTime: formatDate(details.usageStartTime),
+        usageEndTime: formatDate(details.usageEndTime),
+        fileId: res.data.fileId,
+      });
       ElMessage.success(contract_res.data);
       console.log("Contract sign response:", contract_res.data);
       addMessageToConversation(order.conversationId, optimisticMessage);
@@ -312,25 +344,92 @@ export function useChat() {
    * 下载文件
    */
   async function downLoadFile(
-    message: Extract<ChatMessage, P2PMessage>
+    message: Extract<ChatMessage, P2PMessage>,
+    triggerDownload: boolean = true
   ): Promise<string> {
-    const res = await EnhancedP2PMessageRouterInstance.downloadOrderFile(
-      message
-    );
+    let res;
+    if (message.type === "contract") {
+      res = await EnhancedP2PMessageRouterInstance.downloadOrderContract(
+        message,
+        triggerDownload
+      );
+    } else {
+      res = await EnhancedP2PMessageRouterInstance.downloadOrderFile(
+        message
+      );
+    }
+
     if (!res.success || res.error) {
-      throw new Error(res.error || "文件发送失败（业务错误）");
+      throw new Error(res.error || "文件下载失败（业务错误）");
     }
     if (res.success) {
       return res.data.downloadUrl; // 返回成功的消息数据
     }
+    return "";
   }
 
   /**
    * 加载更多历史消息
    */
-  async function loadMoreMessages(conversationId: string): Promise<void> {
+  /**
+   * 加载更多历史消息
+   */
+  async function loadMoreMessages(order: Order): Promise<void> {
+    const conversationId = order.conversationId;
     console.log("[useChat] Load more messages for:", conversationId);
-    // Mock 模式暂不实现分页
+
+    if (state.value.loading.get(conversationId)) return;
+    if (state.value.hasMore.get(conversationId) === false) return;
+
+    state.value.loading.set(conversationId, true);
+
+    try {
+      const currentMsgs = state.value.conversations.get(conversationId) || [];
+      const oldestMsg = currentMsgs[0];
+      const beforeSequence = oldestMsg ? (oldestMsg as P2PMessage).sequence : undefined;
+
+      // Mock 模式暂不实现分页
+      if (mockService.enabled) {
+        // ... mock implementation if needed
+      } else {
+        const currentUserId =
+          authStore.currentUserId ||
+          sessionStorage.getItem("auth_current_user_id") ||
+          "";
+        const persistenceService = getMessagePersistenceService(String(currentUserId));
+
+        const olderMsgs = await persistenceService.getOrderMessages(
+          order.id,
+          20, // limit
+          beforeSequence
+        );
+
+        if (olderMsgs.length > 0) {
+          const newMessages = olderMsgs.map((msg) => ({
+            ...msg,
+            __conversationType: "p2p" as const,
+          }));
+
+          // 合并消息并去重
+          const existingIds = new Set(currentMsgs.map(m => m.id));
+          const uniqueNewMessages = newMessages.filter(m => !existingIds.has(m.id));
+
+          if (uniqueNewMessages.length > 0) {
+            const allMessages = [...uniqueNewMessages, ...currentMsgs];
+            // 再次排序确保顺序正确
+            allMessages.sort((a, b) => a.timestamp - b.timestamp);
+            state.value.conversations.set(conversationId, allMessages);
+          }
+        }
+
+        // 如果获取的消息少于限制，说明没有更多了
+        state.value.hasMore.set(conversationId, olderMsgs.length >= 20);
+      }
+    } catch (error) {
+      console.error("[useChat] Load more messages failed:", error);
+    } finally {
+      state.value.loading.set(conversationId, false);
+    }
   }
 
   /**

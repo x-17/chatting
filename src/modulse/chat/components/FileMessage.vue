@@ -11,21 +11,20 @@
       <div class="file-card" :class="{ mine: isMine }">
         <!-- 图片预览 -->
         <div v-if="isImage" class="image-preview">
-          <el-image
-            :src="imagePreviewUrl"
-            :preview-src-list="[imagePreviewUrl]"
-            fit="cover"
-            lazy
-          >
+          <el-image :src="imagePreviewUrl" :preview-src-list="[imagePreviewUrl]" fit="cover" lazy>
             <template #error>
               <div class="image-error">
-                <el-icon><Picture /></el-icon>
+                <el-icon>
+                  <Picture />
+                </el-icon>
                 <span>加载失败</span>
               </div>
             </template>
             <template #placeholder>
               <div class="image-loading">
-                <el-icon class="is-loading"><Loading /></el-icon>
+                <el-icon class="is-loading">
+                  <Loading />
+                </el-icon>
               </div>
             </template>
           </el-image>
@@ -45,13 +44,7 @@
           </div>
 
           <!-- 下载按钮 -->
-          <el-button
-            v-if="!downloading"
-            type="primary"
-            size="small"
-            :icon="Download"
-            @click="handleDownload"
-          >
+          <el-button v-if="!downloading" type="primary" size="small" :icon="Download" @click="handleDownload">
             下载
           </el-button>
           <el-button v-else type="info" size="small" :loading="true">
@@ -74,27 +67,6 @@
               <Check />
             </el-icon>
           </template>
-        </div>
-        <!--  v-if="contractState && !isMine" -->
-        <div
-          class="action-buttons"
-          v-loading="contractLoading"
-          v-if="contractState && !isMine"
-        >
-          <el-button
-            type="success"
-            size="small"
-            @click="handleContract('agree')"
-          >
-            同意签署
-          </el-button>
-          <el-button
-            type="danger"
-            size="small"
-            @click="handleContract('refuse')"
-          >
-            拒绝签署
-          </el-button>
         </div>
       </div>
 
@@ -130,7 +102,6 @@ interface Props {
 
 interface Emits {
   (e: "download", message: ChatMessage): void;
-  (e: "trigger-contract", isAgree: boolean, message: ChatMessage): void;
 }
 
 const props = defineProps<Props>();
@@ -142,8 +113,8 @@ const contractLoading = ref(false);
 let contractState = ref<boolean>(false);
 const contractService = new ContractService(
   authStore.currentUserId ||
-    sessionStorage.getItem("auth_current_user_id") ||
-    ""
+  sessionStorage.getItem("auth_current_user_id") ||
+  ""
 );
 
 const currentUserInitial = computed(
@@ -205,66 +176,8 @@ async function handleDownload() {
     downloading.value = false;
   }
 }
-async function handleContract(params: string) {
-  if (contractLoading.value) return;
-  // try {
-  //   if (params === "agree") {
-  //     emit("trigger-contract", true, props.message);
-  //   } else if (params === "refuse") {
-  //     emit("trigger-contract", false, props.message);
-  //   }
-  //   // 由父组件处理
-  //   // 这里只显示加载状态
-  // } catch (error) {
-  //   ElMessage.error("请求失败");
-  //   console.error(error);
-  // } finally {
-  //   contractLoading.value = false;
-  // }
-  try {
-    if (params === "agree") {
-      const contract_res = await contractService.agreeOderSign(
-        props.message.orderId!,
-        props.message.metadata.fileId
-      ); //props.message.fileId!
-      ElMessage.success(contract_res.data);
-      console.log("Contract sign response:", contract_res.data);
-      if (contract_res.code === 1) {
-        contractState.value = false;
-      }
-    } else {
-      const reject_res = await contractService.rejectOderSign(
-        props.message.orderId
-      );
-      ElMessage.success(reject_res.data);
-      console.log("Contract reject response:", reject_res.data);
-      if (reject_res.code === 1) {
-        contractState.value = false;
-      }
-    }
-  } catch (error: any) {
-    // ElMessage.error(error.message || "请求失败");
-    console.log(error);
-  }
-}
 onMounted(async () => {
   // 是否显示签署框
-  if (props.message.type === "contract") {
-    try {
-      let res = await contractService.queryOrderSignState(
-        props.message.orderId
-      );
-      if (res.code === 1) {
-        // 🔹 类型保护：判断 data 不是字符串（即成功响应）
-        if (typeof res.data !== "string" && res.data.status === 0) {
-          contractState.value = true;
-        }
-      }
-    } catch (error) {
-      console.log(error);
-      ElMessage.error("查询合同状态失败");
-    }
-  }
 });
 </script>
 
@@ -371,6 +284,7 @@ onMounted(async () => {
   font-size: 11px;
   color: #909399;
 }
+
 /* 按钮容器样式 */
 .action-buttons {
   /* 按钮均匀排列 */
@@ -386,10 +300,12 @@ onMounted(async () => {
 
 /* 可选：按钮悬停/激活状态微调（如需自定义） */
 .action-buttons .el-button--success:hover {
-  background-color: #41b883; /* 加深绿色 */
+  background-color: #41b883;
+  /* 加深绿色 */
 }
 
 .action-buttons .el-button--danger:hover {
-  background-color: #f56c6c; /* 加深红色 */
+  background-color: #f56c6c;
+  /* 加深红色 */
 }
 </style>
