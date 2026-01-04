@@ -7,6 +7,7 @@ import type {
   Contract,
   SignatureRecord,
   ContractParticipant,
+  UploadOrderQuoteRequest,
 } from "../types/contract.types";
 import type { ApiResponse } from "../../utils/api-client";
 import { getSigningPrivateKey } from "../../signal/services/e2ee.service";
@@ -284,6 +285,16 @@ export class ContractService {
     return await this.apiService.orderSign({
       orderId: orderId,
       fileId: Number(fileId),
+      signature: signature,
+    });
+  }
+
+  async uploadOrderQuote(
+    params: Omit<UploadOrderQuoteRequest, "signature">
+  ): Promise<ApiResponse<string>> {
+    const signature = await getSigningPrivateKey(this.myUserId);
+    return await this.apiService.uploadOrderQuote({
+      ...params,
       signature: signature,
     });
   }

@@ -8,10 +8,7 @@
         <div class="header-info">
           <h3>{{ order.otherParty.name }}</h3>
           <div class="order-meta">
-            <el-tag
-              :type="order.type === 'purchase' ? 'primary' : 'success'"
-              size="small"
-            >
+            <el-tag :type="order.type === 'purchase' ? 'primary' : 'success'" size="small">
               {{ order.type === "purchase" ? "我购买" : "我出售" }}
             </el-tag>
             <span class="order-id">订单 #{{ order.id.slice(-8) }}</span>
@@ -21,7 +18,9 @@
       <div class="header-right">
         <el-badge :value="contractNum" class="item">
           <el-button text @click="handleShowContracts">
-            <el-icon><Document /></el-icon>
+            <el-icon>
+              <Document />
+            </el-icon>
             合同
           </el-button>
         </el-badge>
@@ -29,14 +28,12 @@
     </div>
 
     <!-- 消息列表 -->
-    <el-scrollbar
-      ref="scrollbarRef"
-      class="message-list"
-      @scroll="handleScroll"
-    >
+    <el-scrollbar ref="scrollbarRef" class="message-list" @scroll="handleScroll">
       <!-- 加载更多提示 -->
       <div v-if="loading" class="load-more">
-        <el-icon class="is-loading"><Loading /></el-icon>
+        <el-icon class="is-loading">
+          <Loading />
+        </el-icon>
         <span>加载中...</span>
       </div>
 
@@ -47,46 +44,32 @@
           <SystemMessage v-if="message.type === 'system'" :message="message" />
 
           <!-- 文件消息 -->
-          <FileMessage
-            v-else-if="
-              message.type === 'file' ||
-              message.type === 'image' ||
-              message.type === 'contract'
-            "
-            :message="message"
-            :is-mine="message.senderId === currentUserId"
-            @download="handleDownloadFile"
-            @trigger-contract="handleContract"
-          />
+          <FileMessage v-else-if="
+            message.type === 'file' ||
+            message.type === 'image'
+          " :message="message" :is-mine="message.senderId === currentUserId" @download="handleDownloadFile" />
+          <ContractMessage v-else-if="message.type === 'contract'" :message="message"
+            :is-mine="message.senderId === currentUserId" @trigger-contract="handleContract"
+            @preview="handlePreviewFile" @download="handleDownloadFile" />
 
           <!-- 文本消息 -->
-          <MessageBubble
-            v-else
-            :message="message"
-            :is-mine="message.senderId === currentUserId"
-            :show-sender="isGroupChat"
-          />
+          <MessageBubble v-else :message="message" :is-mine="message.senderId === currentUserId"
+            :show-sender="isGroupChat" />
         </template>
       </div>
 
       <!-- 滚动到底部按钮 -->
       <transition name="fade">
-        <div
-          v-if="showScrollToBottom"
-          class="scroll-to-bottom"
-          @click="scrollToBottom"
-        >
-          <el-icon><ArrowDown /></el-icon>
+        <div v-if="showScrollToBottom" class="scroll-to-bottom" @click="scrollToBottom">
+          <el-icon>
+            <ArrowDown />
+          </el-icon>
         </div>
       </transition>
     </el-scrollbar>
     <!-- 引入合同状态弹窗 -->
-    <ContractStatus
-      v-model:visible="isContractDialogVisible"
-      :user-id="String(currentUserId)"
-      :contract-info="contractInfo"
-      @trigger-query-contract="querycontract"
-    />
+    <ContractStatus v-model:visible="isContractDialogVisible" :user-id="String(currentUserId)"
+      :contract-info="contractInfo" @trigger-query-contract="querycontract" />
   </div>
 </template>
 
@@ -98,6 +81,7 @@ import MessageBubble from "./MessageBubble.vue";
 import FileMessage from "./FileMessage.vue";
 import SystemMessage from "./SystemMessage.vue";
 import ContractStatus from "./ContractStatus.vue";
+import ContractMessage from "./ContractMessage.vue";
 import type { Order } from "../types/chat.types";
 import type { ChatMessage } from "../types/chat.types";
 import router from "@/router";
@@ -116,6 +100,7 @@ interface Emits {
   (e: "load-more"): void;
   (e: "is-agree-contract", isAgree: boolean, message: ChatMessage): void;
   (e: "download", message: ChatMessage): void;
+  (e: "preview", message: ChatMessage): void;
 }
 
 const props = defineProps<Props>();
@@ -135,8 +120,8 @@ const otherPartyInitial = computed(() =>
 const isGroupChat = computed(() => props.order.conversationType === "group");
 const ContractServiceInstance = new ContractService(
   authStore.currentUserId ||
-    sessionStorage.getItem("auth_current_user_id") ||
-    ""
+  sessionStorage.getItem("auth_current_user_id") ||
+  ""
 );
 const isContractDialogVisible = ref(false);
 
@@ -185,6 +170,10 @@ function handleDownloadFile(message: ChatMessage) {
   console.log("Download file:", message);
   emit("download", message);
 }
+
+function handlePreviewFile(message: ChatMessage) {
+  emit("preview", message);
+}
 async function handleContract(isAgree: boolean, message: ChatMessage) {
   console.log(isAgree);
   emit("is-agree-contract", isAgree, message);
@@ -199,8 +188,8 @@ async function querycontract() {
       }
     } else {
       console.log(res.data);
-      contractInfo.value = {} as  orderSignState;
-        contractNum.value = 0;
+      contractInfo.value = {} as orderSignState;
+      contractNum.value = 0;
       // ElMessage.error(res.data as string);
     }
   } catch (error) {
@@ -208,13 +197,9 @@ async function querycontract() {
     // ElMessage.error("查询合同状态失败");
   }
 }
-onBeforeUpdate(async ()=>{
-  await querycontract()
+watch(() => props.order.id, () => {
+  querycontract();
 })
-onMounted(async () => {
-  console.log("messageArea is mounted");
-  await querycontract();
-});
 </script>
 
 <style scoped>

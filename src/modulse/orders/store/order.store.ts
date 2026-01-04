@@ -23,9 +23,9 @@ export const useOrderStore = defineStore("order", {
     // 获取指定订单
     getOrderById:
       (state) =>
-      (orderId: string): Order | undefined => {
-        return state.orders.get(orderId);
-      },
+        (orderId: string): Order | undefined => {
+          return state.orders.get(orderId);
+        },
 
     // 获取所有订单列表
     orderList: (state): Order[] => {
@@ -278,6 +278,18 @@ export const useOrderStore = defineStore("order", {
       this.orders.clear();
       this.myOrderIds = [];
       this.lastFetchTime = 0;
+    },
+
+    /**
+     * 批量设置订单（用于 Mock 数据）
+     */
+    setOrders(orders: Order[]): void {
+      this.orders.clear();
+      this.myOrderIds = [];
+      orders.forEach((order) => {
+        this.orders.set(order.orderId, order);
+        this.myOrderIds.push(order.orderId);
+      });
     },
   },
 });

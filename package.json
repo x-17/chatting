@@ -14,6 +14,7 @@
     "@privacyresearch/libsignal-protocol-typescript": "^0.0.16",
     "axios": "^1.10.0",
     "buffer": "^6.0.3",
+    "docx-preview": "^0.3.7",
     "element-plus": "^2.10.2",
     "idb": "^8.0.3",
     "idb-keyval": "^6.2.2",

@@ -1,6 +1,6 @@
 // chat/composables/useMessageHandlers.ts
 
-import { onMounted, onUnmounted } from "vue";
+import { onMounted, onUnmounted, watch, type Ref } from "vue";
 import { useAuthStore } from "../../auth/services/auth.store";
 import { getEnhancedP2PRouter } from "../../signal/services/p2p-message-router.enhanced";
 import { getEnhancedGroupRouter } from "../../groupchat/services/enhanced-group-message-router";
@@ -9,10 +9,15 @@ import { useChat } from "./useChat";
 import type { P2PMessage } from "../../signal/types/message.types";
 import type { GroupMessage } from "../../groupchat/types/group-message.types";
 
-export function useMessageHandlers() {
+import { getMessagePersistenceService } from "../../signal/services/message-persistence.service";
+
+export function useMessageHandlers(activeOrderIdRef?: Ref<string | null>) {
   const authStore = useAuthStore();
   const orderStore = useOrderStore();
   const { addMessageToConversation, updateMessageStatus } = useChat();
+
+
+
 
   let p2pRouter: ReturnType<typeof getEnhancedP2PRouter> | null = null;
   let groupRouter: ReturnType<typeof getEnhancedGroupRouter> | null = null;
@@ -21,15 +26,36 @@ export function useMessageHandlers() {
    * 初始化消息监听
    */
   async function initializeHandlers(): Promise<void> {
+    console.log("initializeHandlers");
+
     if (!authStore.user) {
-      console.error("[MessageHandlers] No user authenticated");
-      return;
+      console.log("[MessageHandlers] Waiting for user authentication...");
+      await new Promise<void>((resolve) => {
+        const unwatch = watch(
+          () => authStore.user,
+          (user) => {
+            if (user) {
+              unwatch();
+              resolve();
+            }
+          }
+        );
+      });
     }
 
     try {
       // 初始化P2P路由器
       p2pRouter = getEnhancedP2PRouter(authStore.currentUserId);
+      console.log("p2pRouter", p2pRouter);
+
       await p2pRouter.init();
+
+      // 初始化持久化服务
+      const persistenceService = getMessagePersistenceService(authStore.currentUserId);
+      await persistenceService.init();
+
+      console.log("init p2pRouter and persistence");
+
 
       // 注册P2P消息处理器
       p2pRouter.onMessage((message: P2PMessage) => {
@@ -37,33 +63,33 @@ export function useMessageHandlers() {
       });
 
       // 注册P2P状态变化处理器
-      p2pRouter.onStatusChange((status: string) => {
-        console.log("[MessageHandlers] P2P connection status:", status);
+      // p2pRouter.onStatusChange((status: string) => {
+      //   console.log("[MessageHandlers] P2P connection status:", status);
 
-        if (status === "connected") {
-          // 连接成功后同步离线消息
-          syncOfflineMessages();
-        }
-      });
+      //   if (status === "connected") {
+      //     // 连接成功后同步离线消息
+      //     syncOfflineMessages();
+      //   }
+      // });
 
       // 初始化群组路由器
-      groupRouter = getEnhancedGroupRouter(authStore.user.tenantId);
+      // groupRouter = getEnhancedGroupRouter(authStore.user.tenantId);
       const orderList = orderStore.orderList;
-      const groupIds = orderList
-        .filter((order) => order.conversationType === "group")
-        .map((order) => order.conversationId);
+      // const groupIds = orderList
+      //   .filter((order) => order.orderType === 1) // 1 is group
+      //   .map((order) => order.orderId);
 
-      await groupRouter.init(groupIds);
+      // await groupRouter.init(groupIds);
 
-      // 注册群组消息处理器
-      groupRouter.onMessage((message: GroupMessage) => {
-        handleGroupMessage(message);
-      });
+      // // 注册群组消息处理器
+      // groupRouter.onMessage((message: GroupMessage) => {
+      //   handleGroupMessage(message);
+      // });
 
       // 注册群组状态变化处理器
-      groupRouter.onStatusChange((status: string) => {
-        console.log("[MessageHandlers] Group connection status:", status);
-      });
+      // groupRouter.onStatusChange((status: string) => {
+      //   console.log("[MessageHandlers] Group connection status:", status);
+      // });
 
       console.log("[MessageHandlers] Handlers initialized successfully");
     } catch (error) {
@@ -78,36 +104,37 @@ export function useMessageHandlers() {
     console.log("[MessageHandlers] Received P2P message:", message.id);
 
     // 找到对应的订单/会话
-    const order = orderStore.orderList.find(
-      (o) =>
-        o.conversationType === "p2p" &&
-        (o.buyerId === message.senderId || o.sellerId === message.senderId)
-    );
+    const order = orderStore.getOrderById(message.orderId);
 
     if (!order) {
-      console.warn("[MessageHandlers] Order not found for P2P message");
+      console.warn("[MessageHandlers] Order not found for P2P message:", message.orderId);
       return;
     }
 
     // 添加到会话
-    addMessageToConversation(order.conversationId, {
+    addMessageToConversation(order.orderId, {
       ...message,
       __conversationType: "p2p",
-    });
+    } as any);
+
+    // 检查是否是当前活动订单
+    const isActive = activeOrderIdRef?.value === order.orderId;
 
     // 更新订单的未读数和最后消息信息
     const messageContent =
       message.type === "text" ? message.content : `[${message.type}]`;
-    orderStore.updateOrderWithMessage(order.id, {
-      unreadCount: (order as any).unreadCount
-        ? (order as any).unreadCount + 1
-        : 1,
+
+    const currentUnread = (order.metadata as any)?.unreadCount || 0;
+    const newUnreadCount = isActive ? 0 : currentUnread + 1;
+
+    orderStore.updateOrderWithMessage(order.orderId, {
+      unreadCount: newUnreadCount,
       lastMessageTime: message.timestamp,
       lastMessageContent: messageContent,
     });
 
     // 显示系统通知（如果在后台）
-    if (document.hidden) {
+    if (document.hidden && message.senderId !== authStore.user!.id) {
       showNotification(message, order);
     }
   }
@@ -119,29 +146,33 @@ export function useMessageHandlers() {
     console.log("[MessageHandlers] Received group message:", message.id);
 
     // 找到对应的订单/会话
-    const order = orderStore.orderList.find(
-      (o) =>
-        o.conversationType === "group" && o.conversationId === message.groupId
-    );
+    // GroupMessage 应该也有 orderId，或者 groupId 就是 orderId
+    const orderId = (message as any).orderId || (message as any).groupId;
+    const order = orderStore.getOrderById(orderId);
 
     if (!order) {
-      console.warn("[MessageHandlers] Order not found for group message");
+      console.warn("[MessageHandlers] Order not found for group message:", orderId);
       return;
     }
 
     // 添加到会话
-    addMessageToConversation(order.conversationId, {
+    addMessageToConversation(order.orderId, {
       ...message,
       __conversationType: "group",
-    });
+    } as any);
+
+    // 检查是否是当前活动订单
+    const isActive = activeOrderIdRef?.value === order.orderId;
 
     // 更新订单的未读数和最后消息信息
     const messageContent =
       message.type === "text" ? message.content : `[${message.type}]`;
-    orderStore.updateOrderWithMessage(order.id, {
-      unreadCount: (order as any).unreadCount
-        ? (order as any).unreadCount + 1
-        : 1,
+
+    const currentUnread = (order.metadata as any)?.unreadCount || 0;
+    const newUnreadCount = isActive ? 0 : currentUnread + 1;
+
+    orderStore.updateOrderWithMessage(order.orderId, {
+      unreadCount: newUnreadCount,
       lastMessageTime: message.timestamp,
       lastMessageContent: messageContent,
     });
@@ -170,7 +201,7 @@ export function useMessageHandlers() {
       }
 
       // 刷新订单未读数
-      const orderIds = orderStore.orderList.map((o) => o.id);
+      const orderIds = orderStore.orderList.map((o) => o.orderId);
       await orderStore.updateUnreadCounts(orderIds);
     } catch (error) {
       console.error("[MessageHandlers] Sync offline messages failed:", error);
@@ -190,9 +221,9 @@ export function useMessageHandlers() {
     const senderName =
       message.senderId === authStore.user!.id
         ? "我"
-        : order.otherParty?.name || message.senderId;
+        : order.dataName || message.senderId;
 
-    const title = `${order.title}`;
+    const title = `${order.dataName}`;
     const body =
       message.type === "text" ? message.content : `[${message.type}]`;
 

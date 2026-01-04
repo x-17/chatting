@@ -32,10 +32,7 @@
           </div>
           <div class="info-item">
             <span class="label">订单类型</span>
-            <el-tag
-              :type="order.type === 'purchase' ? 'primary' : 'success'"
-              size="small"
-            >
+            <el-tag :type="order.type === 'purchase' ? 'primary' : 'success'" size="small">
               {{ order.type === "purchase" ? "我购买" : "我出售" }}
             </el-tag>
           </div>
@@ -64,10 +61,8 @@
         <div class="goods-info">
           <div class="goods-name">{{ orderInfo.goods.name }}</div>
           <div class="goods-details">
-            <span
-              >数量: {{ orderInfo.goods.quantity }}
-              {{ orderInfo.goods.unit }}</span
-            >
+            <span>数量: {{ orderInfo.goods.quantity }}
+              {{ orderInfo.goods.unit }}</span>
             <span>单价: ¥{{ orderInfo.goods.price }}</span>
           </div>
         </div>
@@ -96,14 +91,12 @@
           <el-badge :value="contracts.length" class="item-badge" />
         </div>
         <div class="contract-list">
-          <div
-            v-for="contract in contracts"
-            :key="contract.id"
-            class="contract-item"
-            @click="handleViewContract(contract.id)"
-          >
+          <div v-for="contract in contracts" :key="contract.id" class="contract-item"
+            @click="handleViewContract(contract.id)">
             <div class="contract-header">
-              <el-icon color="#409EFF"><Document /></el-icon>
+              <el-icon color="#409EFF">
+                <Document />
+              </el-icon>
               <span class="contract-title">{{ contract.title }}</span>
             </div>
             <el-tag :type="getContractStatusType(contract.status)" size="small">
@@ -115,27 +108,14 @@
 
       <!-- 操作按钮 -->
       <div class="detail-actions">
-        <el-button
-          v-if="canCreateContract"
-          type="primary"
-          :icon="DocumentAdd"
-          @click="emit('create-contract')"
-          block
-        >
+        <el-button v-if="canCreateContract" type="primary" :icon="DocumentAdd" @click="emit('create-contract')" block>
           创建合同
         </el-button>
-
-        <el-button
-          v-if="order.status === 'active'"
-          type="success"
-          :icon="CircleCheck"
-          @click="handleCompleteOrder"
-          block
-        >
+        <el-button v-if="order.status === 'active'" type="success" :icon="CircleCheck" @click="handleCompleteOrder"
+          block style="margin-left: 0;">
           确认完成订单
         </el-button>
-
-        <el-button :icon="MoreFilled" @click="showMoreActions" block>
+        <el-button :icon="MoreFilled" @click="showMoreActions" block style="margin-left: 0;">
           更多操作
         </el-button>
       </div>

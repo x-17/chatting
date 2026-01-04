@@ -555,3 +555,14 @@ export class MessagePersistenceService {
         }
     }
 }
+
+
+// Singleton factory
+const persistenceInstances = new Map<string, MessagePersistenceService>();
+
+export function getMessagePersistenceService(userId: string): MessagePersistenceService {
+    if (!persistenceInstances.has(userId)) {
+        persistenceInstances.set(userId, new MessagePersistenceService(userId));
+    }
+    return persistenceInstances.get(userId)!;
+}
