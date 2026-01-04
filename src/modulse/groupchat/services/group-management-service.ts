@@ -1,111 +1,97 @@
 // src/e2ee/services/group-management-service.ts
 
 import { groupStore } from '../store/group-store';
-import { groupE2eeService } from './group-e2ee-service';
 import { groupStateStore } from '../store/group-state-store';
-import { mockMessageSender } from './mock-message-sender';
-//import {WebSocketMessageSender} from './websocket-message-sender.ts'
-//TODO:这里是本地完成测试用的应该使用正式通信替代
+import { groupE2eeService } from './group-e2ee-service';
+import type { ISenderKeyDistributionMessage } from '../protocol/types';
 
-// 修改默认的消息发送器为模拟发送器
-const defaultMessageSender: IMessageSender = mockMessageSender;
-
-// 消息发送器接口
 export interface IMessageSender {
+    /**
+     * 发送私聊消息 (用于密钥分发)
+     * 必须是端到端加密通道
+     */
     sendToUser(userId: string, message: any): Promise<void>;
+
+    /**
+     * 发送群组广播 (用于信令和群聊)
+     * 服务器会转发给群内所有在线成员
+     */
     sendToGroup(orderId: string, message: any): Promise<void>;
 }
 
+// 模拟的发送器，用于防止未注入时报错
+const mockMessageSender: IMessageSender = {
+    async sendToUser(uid, msg) { console.log('[Mock] Send to user:', uid, msg); },
+    async sendToGroup(gid, msg) { console.log('[Mock] Send to group:', gid, msg); }
+};
+
 export const groupManagementService = {
-    // 允许设置自定义的消息发送器
-    messageSender: defaultMessageSender,
+    messageSender: mockMessageSender,
 
     /**
-     * 创建新群组
+     * 依赖注入：设置真正的消息发送器
+     */
+    setMessageSender(sender: IMessageSender) {
+        this.messageSender = sender;
+    },
+
+    /**
+     * 【创建群组】
+     * 1. 存储本地元数据
+     * 2. 初始化管理员(自己)的加密会话
+     * 3. 通知并分发密钥给初始成员
      */
     async createGroup(orderId: string, adminId: string, initialMembers: string[] = []): Promise<void> {
-        // 创建群组状态
+        // 去重成员列表
+        const allMembers = Array.from(new Set([adminId, ...initialMembers]));
+
+        // 1. 存储群组基本信息
         const groupState = {
             orderId,
             adminId,
-            members: [adminId, ...initialMembers],
+            members: allMembers,
             createdAt: Date.now()
         };
-
         await groupStore.set(groupState);
+        console.log(`[GroupMgmt] Created group ${orderId} locally.`);
 
-        console.log(`[GroupMgmt] Created group ${orderId} with admin ${adminId} and members: ${initialMembers.join(', ')}`);
+        // 2. 初始化我的 Sender Key (我是管理员)
+        const myDistMsg = await groupE2eeService.createGroupSession(adminId, orderId);
 
-        // 【修复】不在这里自动创建会话，让调用方控制时序
-        // 通知初始成员加入群组（但不立即分发密钥）
+        // 3. 邀请初始成员
+        // 注意：这里我们通过单播 P2P 逐个发送邀请和密钥
+        // 这样新成员一上线收到消息就能解密群聊
         for (const memberId of initialMembers) {
-            if (memberId !== adminId) {
-                await this.messageSender.sendToUser(memberId, {
-                    type: 'MEMBER_JOINED',
-                    payload: {
-                        orderId,
-                        memberId,
-                        inviterId: adminId,
-                        timestamp: Date.now()
-                    }
-                });
-            }
+            if (memberId === adminId) continue;
+
+            // 发送密钥 (P2P E2EE)
+            await this.distributeKeyToUser(memberId, myDistMsg);
+
+            // 发送入群通知 (可以是系统消息)
+            await this.messageSender.sendToUser(memberId, {
+                type: 'MEMBER_JOINED', // 信令类型
+                payload: {
+                    orderId,
+                    memberId, // 你被加入了
+                    inviterId: adminId,
+                    timestamp: Date.now()
+                }
+            });
         }
     },
 
     /**
-     * 【修复】添加成员到群组
+     * 【添加成员】
+     * 触发者：管理员
      */
     async addMemberToGroup(orderId: string, inviterId: string, newMemberId: string): Promise<void> {
-        console.log(`[GroupMgmt] Adding ${newMemberId} to group ${orderId} by ${inviterId}`);
-
-        // 更新群组成员列表
+        // 1. 更新本地存储
         await groupStore.addMember(orderId, newMemberId);
+        console.log(`[GroupMgmt] Added member ${newMemberId} to group ${orderId}`);
 
-        // 获取群组状态
-        const groupState = await groupStore.get(orderId);
-        if (!groupState) {
-            throw new Error(`Group ${orderId} not found`);
-        }
-
-        console.log(`[GroupMgmt] Group ${orderId} now has members: ${groupState.members.join(', ')}`);
-
-        // 【关键修复】发送现有成员的密钥分发给新成员
-        // 但这次我们不在这里自动创建新的会话，而是使用现有的会话状态
-        for (const memberId of groupState.members) {
-            if (memberId === newMemberId) continue; // 跳过新成员自己
-
-            try {
-                // 获取现有成员的当前会话状态
-                const senderState = await groupStateStore.get(memberId, orderId, memberId);
-                if (senderState) {
-                    // 使用现有状态创建分发消息
-                    const SenderKeySession = await import('../protocol/sender-key-session').then(m => m.SenderKeySession);
-                    const session = SenderKeySession.createFromState(senderState, memberId, orderId);
-
-                    const distributionMessage = session.getDistributionMessage();
-                    const fullDistribution = {
-                        ...distributionMessage,
-                        orderId,
-                        senderId: memberId
-                    };
-
-                    // 发送给新成员
-                    await this.messageSender.sendToUser(newMemberId, {
-                        type: 'KEY_DISTRIBUTION',
-                        payload: fullDistribution
-                    });
-
-                    console.log(`[GroupMgmt] Sent ${memberId}'s key distribution to ${newMemberId}`);
-                } else {
-                    console.warn(`[GroupMgmt] No sender state found for ${memberId} in group ${orderId}`);
-                }
-            } catch (error) {
-                console.error(`[GroupMgmt] Failed to create distribution for ${memberId} to ${newMemberId}:`, error);
-            }
-        }
-
-        // 通知群组有新成员加入
+        // 2. 广播 "MEMBER_JOINED" 信令给整个群 (包括新成员)
+        // 现有的群成员收到这个信令后，会自动触发 handleMemberJoinedSignal
+        // 将他们各自的 Key 发送给新成员
         await this.messageSender.sendToGroup(orderId, {
             type: 'MEMBER_JOINED',
             payload: {
@@ -115,105 +101,124 @@ export const groupManagementService = {
                 timestamp: Date.now()
             }
         });
-
-        console.log(`[GroupMgmt] Notified group about ${newMemberId} joining`);
     },
 
     /**
-     * 【修复】从群组中移除成员 - 触发完整的重新密钥化
+     * 【移除成员】
+     * 触发者：管理员
      */
     async removeMemberFromGroup(orderId: string, removerId: string, memberToRemoveId: string): Promise<void> {
-        console.log(`[GroupMgmt] Removing ${memberToRemoveId} from group ${orderId} by ${removerId}`);
-
-        // 验证操作者权限
+        // 1. 权限验证
         const groupState = await groupStore.get(orderId);
         if (!groupState || groupState.adminId !== removerId) {
-            throw new Error('Only group admin can remove members');
+            throw new Error('Permission denied: Only admin can remove members.');
         }
 
-        // 更新群组成员列表
+        // 2. 更新本地存储
         await groupStore.removeMember(orderId, memberToRemoveId);
 
-        // 获取剩余成员
-        const updatedGroupState = await groupStore.get(orderId);
-        const remainingMembers = updatedGroupState?.members || [];
+        // 3. 清理我本地存储中关于该用户的密钥 (不再接收他的消息)
+        await groupStateStore.remove(removerId, orderId, memberToRemoveId);
 
-        console.log(`[GroupMgmt] Remaining members after removal: ${remainingMembers.join(', ')}`);
+        console.log(`[GroupMgmt] Removed member ${memberToRemoveId} from group ${orderId}`);
 
-        // 【关键修复】清理所有与被移除成员相关的密钥状态
-        for (const memberId of remainingMembers) {
-            try {
-                await groupStateStore.remove(memberId, orderId, memberToRemoveId);
-                console.log(`[GroupMgmt] Cleaned ${memberToRemoveId}'s key from ${memberId}'s storage`);
-            } catch (error) {
-                console.warn(`[GroupMgmt] Failed to clean ${memberToRemoveId}'s key from ${memberId}:`, error);
-            }
-        }
-
-        // 通知群组有成员被移除（这会触发重新密钥化）
+        // 4. 广播 "MEMBER_REMOVED" 信令给剩余成员
+        // 剩余成员收到后，会触发 handleMemberRemovedSignal 进行密钥轮转
         await this.messageSender.sendToGroup(orderId, {
             type: 'MEMBER_REMOVED',
             payload: {
                 orderId,
                 memberId: memberToRemoveId,
                 removerId,
-                timestamp: Date.now(),
-                requiresRekey: true // 标记需要重新密钥化
+                timestamp: Date.now()
             }
         });
-
-        console.log(`[GroupMgmt] Notified group about ${memberToRemoveId} removal and rekey requirement`);
     },
 
+    // ==========================================
+    // 信令响应处理 (被动触发)
+    // 这些方法应该在 Router 收到 WebSocket 消息后调用
+    // ==========================================
+
     /**
-     * 处理收到的密钥分发消息
+     * 【处理：成员加入】
+     * 逻辑：如果我是老成员，有新人加入，我需要把我的 Key 发给他。
      */
-    async processKeyDistribution(myUserId: string, distributionMessage: any): Promise<void> {
-        if (distributionMessage.type !== 'KEY_DISTRIBUTION') {
-            throw new Error('Invalid distribution message type');
+    async handleMemberJoinedSignal(myUserId: string, payload: any): Promise<void> {
+        const { orderId, memberId } = payload;
+
+        // 如果是我自己加入了，不需要给自己发 Key (但我可能需要拉取群组列表，这里暂不处理)
+        if (memberId === myUserId) return;
+
+        // 检查我是否在群里 (双重保险)
+        const amIMember = await groupStore.isMember(orderId, myUserId);
+        if (!amIMember) return;
+
+        console.log(`[GroupMgmt] Detected new member ${memberId}, sending my key...`);
+
+        // 获取我当前的发送密钥 (不需要轮转，直接给当前的即可)
+        const myDistMsg = await groupE2eeService.getMyCurrentDistribution(myUserId, orderId);
+
+        if (myDistMsg) {
+            await this.distributeKeyToUser(memberId, myDistMsg);
         }
-
-        const payload = distributionMessage.payload;
-        console.log(`[GroupMgmt] ${myUserId} processing key distribution from ${payload.senderId}`);
-
-        await groupE2eeService.processGroupKeyDistribution(
-            myUserId,
-            payload.senderId,
-            payload
-        );
     },
 
     /**
-     * 【修复】处理成员加入通知
+     * 【处理：成员移除】
+     * 逻辑：有人被移除了。为了前向安全，我必须轮转(Rotate)我的密钥。
      */
-    async handleMemberJoined(myUserId: string, message: any): Promise<void> {
-        const { orderId, memberId } = message.payload;
+    async handleMemberRemovedSignal(myUserId: string, payload: any): Promise<void> {
+        const { orderId, memberId } = payload;
 
-        console.log(`[GroupMgmt] ${myUserId} handling member joined: ${memberId}`);
+        // 1. 从我的存储中删除被踢者的 Session (防止他还能发消息给我，虽然他已经被踢出群路由)
+        await groupStateStore.remove(myUserId, orderId, memberId);
 
-        // 如果是自己加入，不需要特殊处理
+        // 如果被踢的是我自己
         if (memberId === myUserId) {
+            console.log(`[GroupMgmt] I have been removed from group ${orderId}.`);
+            await groupStore.remove(orderId); // 删除群组元数据
             return;
         }
 
-        // 【修复】不在这里自动分发密钥，让上层逻辑控制
-        // 这避免了重复分发和时序问题
-        console.log(`[GroupMgmt] ${myUserId} acknowledged ${memberId} joined group ${orderId}`);
+        console.log(`[GroupMgmt] Member ${memberId} removed. Rotating my key to ensure forward secrecy...`);
+
+        // 2. 密钥轮转：生成全新的 Session
+        // 这会覆盖旧的 Chain Key，使得被踢者即使持有旧 Key 也无法推导出新 Key
+        const newDistMsg = await groupE2eeService.createGroupSession(myUserId, orderId);
+
+        // 3. 广播新密钥给剩下的所有人
+        // 使用 sendToGroup，因为通过 P2P 一个个发效率太低
+        // 这里的 KEY_DISTRIBUTION 消息本身可以是明文传输的(依托于 TLS)，
+        // 或者也可以包装在 P2P 加密层中(如果追求极致安全，但群发通常直接发)。
+        // *重要*：Signal 协议中，SenderKeyDistribution 消息包含的是 Public Key 和 Chain Key，
+        // 只要信道(TLS/WebSocket)是安全的，直接发送也是可接受的。
+        // 但为了统一，我们通常建议将这个广播消息包装在一种特殊的 Type 中。
+        await this.messageSender.sendToGroup(orderId, {
+            type: 'KEY_DISTRIBUTION', // 这是一个群广播的 Key Update
+            payload: newDistMsg
+        });
     },
 
     /**
-     * 获取群组成员列表
+     * 【处理：收到密钥分发】
+     * 逻辑：无论是 P2P 收到的，还是群广播收到的 (Key Rotation)，都通过此方法处理
      */
-    async getGroupMembers(orderId: string): Promise<string[]> {
-        const groupState = await groupStore.get(orderId);
-        return groupState ? groupState.members : [];
+    async handleKeyDistributionSignal(myUserId: string, payload: any): Promise<void> {
+        await groupE2eeService.processGroupKeyDistribution(myUserId, payload);
     },
 
+    // --- 私有辅助方法 ---
+
     /**
-     * 检查用户是否是群组管理员
+     * 封装发送密钥分发消息的逻辑
+     * 这通常通过 P2P 隐蔽通道发送 (System Message)
      */
-    async isGroupAdmin(orderId: string, userId: string): Promise<boolean> {
-        const groupState = await groupStore.get(orderId);
-        return groupState ? groupState.adminId === userId : false;
+    async distributeKeyToUser(targetUserId: string, distMsg: ISenderKeyDistributionMessage) {
+        // 这里我们约定一个特殊的 type，Router 收到后不渲染，而是转交给 Service
+        await this.messageSender.sendToUser(targetUserId, {
+            type: 'KEY_DISTRIBUTION',
+            payload: distMsg
+        });
     }
 };

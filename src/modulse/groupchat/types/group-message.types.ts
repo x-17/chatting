@@ -1,15 +1,15 @@
-// types/group-message.types.ts
+// src/types/group-message.types.ts (或 src/e2ee/types/group-message.types.ts)
 
 export type GroupMessageStatus = 'pending' | 'sent' | 'delivered' | 'failed';
 export type GroupMessageType = 'text' | 'file' | 'image' | 'system' | 'member_joined' | 'member_left';
 
 /**
- * 群组消息接口
+ * 前端使用的群组消息接口 (UI/本地存储)
  */
 export interface GroupMessage {
     id: string;                          // 消息唯一ID
     type: GroupMessageType;              // 消息类型
-    orderId: string;                     // 群组ID     改为订单id
+    orderId: string;                     // 群组ID (订单ID)
     senderId: string;                    // 发送者ID
     content: string;                     // 消息内容（明文或元数据）
     encryptedContent?: any;              // 加密后的内容（ISenderKeyMessage）
@@ -28,7 +28,6 @@ export interface GroupMessage {
 }
 
 /**
- * 持久化群组消息（存储在服务器）
  */
 export interface PersistedGroupMessage {
     id: string;

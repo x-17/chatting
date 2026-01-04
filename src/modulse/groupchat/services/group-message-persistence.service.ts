@@ -1,21 +1,30 @@
-// services/group-message-persistence.service.ts
+// src/e2ee/storage/group-message-persistence.service.ts
 
-import { openDB, type IDBPDatabase } from 'idb';
-import type { GroupMessage } from '../types/group-message.types';
+import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
+// 引用你提供的类型文件
+import type { GroupMessage, GroupMessageStatus } from '../types/group-message.types';
 
-const DB_NAME = 'group-messages-db';
-const DB_VERSION = 1;
-const STORE_NAME = 'messages';
+// 定义 IndexedDB 的结构
+interface GroupChatDB extends DBSchema {
+    'group_messages': {
+        key: string; // 使用 message.id 作为主键
+        value: GroupMessage;
+        indexes: {
+            'by_order_id': string; // 用于查询某个订单(群组)的所有消息
+            'by_timestamp': number;
+            'by_order_timestamp': [string, number]; // 复合索引：查询特定订单的时间范围 (用于分页)
+        };
+    };
+}
 
-/**
- * 群组消息持久化服务 - 本地 IndexedDB 存储
- */
 export class GroupMessagePersistenceService {
-    private db: IDBPDatabase | null = null;
-    private userId: string;
+    private dbName: string;
+    private dbVersion = 1;
+    private db: IDBPDatabase<GroupChatDB> | null = null;
 
-    constructor(userId: string) {
-        this.userId = userId;
+    constructor(private userId: string) {
+        // 数据库名称包含 userId，实现多账号数据隔离
+        this.dbName = `group-chat-db-${userId}`;
     }
 
     /**
@@ -24,177 +33,112 @@ export class GroupMessagePersistenceService {
     async init(): Promise<void> {
         if (this.db) return;
 
-        try {
-            this.db = await openDB(DB_NAME, DB_VERSION, {
-                upgrade(db) {
-                    if (!db.objectStoreNames.contains(STORE_NAME)) {
-                        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-
-                        // 创建索引
-                        store.createIndex('by-order', ['orderId', 'timestamp']);
-                        store.createIndex('by-status', 'status');
-                        store.createIndex('by-timestamp', 'timestamp');
-                        store.createIndex('by-user', 'userId'); // 用于多用户场景
-                    }
-                },
-            });
-
-            console.log(`[GroupPersistence] Database initialized for user: ${this.userId}`);
-        } catch (error) {
-            console.error('[GroupPersistence] Init error:', error);
-            throw error;
-        }
+        this.db = await openDB<GroupChatDB>(this.dbName, this.dbVersion, {
+            upgrade(db) {
+                // 创建对象仓库
+                if (!db.objectStoreNames.contains('group_messages')) {
+                    const store = db.createObjectStore('group_messages', {
+                        keyPath: 'id',
+                    });
+                    // 创建索引
+                    store.createIndex('by_order_id', 'orderId');
+                    store.createIndex('by_timestamp', 'timestamp');
+                    // 创建复合索引 [orderId, timestamp]，用于高效的分页查询
+                    store.createIndex('by_order_timestamp', ['orderId', 'timestamp']);
+                }
+            },
+        });
     }
 
     /**
-     * 保存消息
+     * 保存一条消息 (新建或更新)
      */
     async saveMessage(message: GroupMessage): Promise<void> {
-        await this.ensureDb();
-
-        const messageWithUser = {
-            ...message,
-            userId: this.userId
-        };
-
-        try {
-            await this.db!.put(STORE_NAME, messageWithUser);
-            console.log(`[GroupPersistence] Saved message: ${message.id}`);
-        } catch (error) {
-            console.error('[GroupPersistence] Save error:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * 批量保存消息
-     */
-    async saveMessages(messages: GroupMessage[]): Promise<void> {
-        await this.ensureDb();
-
-        const tx = this.db!.transaction(STORE_NAME, 'readwrite');
-
-        try {
-            await Promise.all(
-                messages.map(msg =>
-                    tx.store.put({ ...msg, userId: this.userId })
-                )
-            );
-            await tx.done;
-            console.log(`[GroupPersistence] Saved ${messages.length} messages`);
-        } catch (error) {
-            console.error('[GroupPersistence] Batch save error:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * 获取群组消息
-     */
-    async getGroupMessages(orderId: string, limit: number = 50): Promise<GroupMessage[]> {
-        await this.ensureDb();
-
-        try {
-            const index = this.db!.transaction(STORE_NAME).store.index('by-order');
-
-            // 获取指定群组的消息
-            const messages = await index.getAll([orderId]);
-
-            // 过滤当前用户的消息并排序
-            return messages
-                .filter(msg => msg.userId === this.userId)
-                .sort((a, b) => b.timestamp - a.timestamp)
-                .slice(0, limit);
-
-        } catch (error) {
-            console.error('[GroupPersistence] Get group messages error:', error);
-            return [];
-        }
-    }
-
-    /**
-     * 获取待发送的消息（状态为 pending）
-     */
-    async getPendingMessages(): Promise<GroupMessage[]> {
-        await this.ensureDb();
-
-        try {
-            const index = this.db!.transaction(STORE_NAME).store.index('by-status');
-            const messages = await index.getAll('pending');
-
-            return messages.filter(msg => msg.userId === this.userId);
-
-        } catch (error) {
-            console.error('[GroupPersistence] Get pending error:', error);
-            return [];
-        }
+        if (!this.db) await this.init();
+        await this.db!.put('group_messages', message);
     }
 
     /**
      * 更新消息状态
      */
-    async updateMessageStatus(messageId: string, status: GroupMessage['status']): Promise<void> {
-        await this.ensureDb();
+    async updateMessageStatus(messageId: string, status: GroupMessageStatus): Promise<void> {
+        if (!this.db) await this.init();
 
-        try {
-            const message = await this.db!.get(STORE_NAME, messageId);
-            if (message && message.userId === this.userId) {
-                message.status = status;
-                await this.db!.put(STORE_NAME, message);
-                console.log(`[GroupPersistence] Updated message ${messageId} status to ${status}`);
-            }
-        } catch (error) {
-            console.error('[GroupPersistence] Update status error:', error);
-            throw error;
+        const tx = this.db!.transaction('group_messages', 'readwrite');
+        const store = tx.objectStore('group_messages');
+
+        const message = await store.get(messageId);
+        if (message) {
+            message.status = status;
+            await store.put(message);
         }
+        await tx.done;
+    }
+
+    /**
+     * 获取群组历史消息 (分页，按时间倒序)
+     * @param orderId 订单/群组ID
+     * @param limit 每页条数
+     * @param beforeTimestamp 获取该时间之前的消息 (用于下拉加载更多)
+     */
+    async getGroupMessages(
+        orderId: string,
+        limit: number = 50,
+        beforeTimestamp: number = Date.now()
+    ): Promise<GroupMessage[]> {
+        if (!this.db) await this.init();
+
+        // 查询范围：[orderId, 0] 到 [orderId, beforeTimestamp]
+        // upperOpen: true 表示不包含 beforeTimestamp 本身
+        const range = IDBKeyRange.bound(
+            [orderId, 0],
+            [orderId, beforeTimestamp],
+            false,
+            true
+        );
+
+        const messages: GroupMessage[] = [];
+        // 使用 prev 方向遍历索引 (从新到旧)
+        let cursor = await this.db!.transaction('group_messages')
+            .store.index('by_order_timestamp')
+            .openCursor(range, 'prev');
+
+        while (cursor && messages.length < limit) {
+            messages.push(cursor.value);
+            cursor = await cursor.continue();
+        }
+
+        // 返回结果通常需要按时间正序排列给 UI 渲染 (旧 -> 新)
+        return messages.reverse();
+    }
+
+    /**
+     * 获取群组最后一条消息 (用于会话列表展示)
+     */
+    async getLastMessage(orderId: string): Promise<GroupMessage | undefined> {
+        if (!this.db) await this.init();
+
+        const range = IDBKeyRange.bound([orderId, 0], [orderId, Date.now()]);
+        const cursor = await this.db!.transaction('group_messages')
+            .store.index('by_order_timestamp')
+            .openCursor(range, 'prev');
+
+        return cursor?.value;
+    }
+
+    /**
+     * 根据 ID 获取单条消息
+     */
+    async getMessageById(messageId: string): Promise<GroupMessage | undefined> {
+        if (!this.db) await this.init();
+        return this.db!.get('group_messages', messageId);
     }
 
     /**
      * 删除消息
      */
     async deleteMessage(messageId: string): Promise<void> {
-        await this.ensureDb();
-
-        try {
-            await this.db!.delete(STORE_NAME, messageId);
-            console.log(`[GroupPersistence] Deleted message: ${messageId}`);
-        } catch (error) {
-            console.error('[GroupPersistence] Delete error:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * 清理旧消息
-     */
-    async cleanOldMessages(orderId: string, keepCount: number = 500): Promise<void> {
-        await this.ensureDb();
-
-        try {
-            const messages = await this.getGroupMessages(orderId, keepCount + 100);
-
-            // 删除超出保留数量的消息
-            const toDelete = messages.slice(keepCount);
-            const tx = this.db!.transaction(STORE_NAME, 'readwrite');
-
-            await Promise.all(
-                toDelete.map(msg => tx.store.delete(msg.id))
-            );
-
-            await tx.done;
-            console.log(`[GroupPersistence] Cleaned ${toDelete.length} old messages from group ${orderId}`);
-
-        } catch (error) {
-            console.error('[GroupPersistence] Clean error:', error);
-        }
-    }
-
-    /**
-     * 确保数据库已初始化
-     */
-    private async ensureDb(): Promise<void> {
-        if (!this.db) {
-            await this.init();
-        }
+        if (!this.db) await this.init();
+        await this.db!.delete('group_messages', messageId);
     }
 }

@@ -239,6 +239,44 @@ export class WebSocketManager {
   }
 
   /**
+   * 兼容性封装：发送群组消息
+   */
+  async sendGroupMessage(
+      orderId: string,
+      encryptedContent: string,
+      type: 'text' | 'file' = 'text'
+  ): Promise<any> {
+    return await this.send({
+      id: this.generateMessageId(),
+      messageType: type, // 复用现有的 text/file 类型
+      orderId: orderId,
+      encryptedContent: encryptedContent,
+      timestamp: Date.now()
+    }, { requireAck: true });
+  }
+
+  /**
+   * 兼容性封装：发送群信令
+   * 实际上是发送一条 type='system', content='JSON...' 的标准消息
+   */
+  async sendGroupSignal(
+      orderId: string,
+      signalType: string,
+      payload: any
+  ): Promise<any> {
+    return await this.send({
+      id: this.generateMessageId(),
+      messageType: 'system', // 复用 system 类型
+      orderId: orderId,
+      content: JSON.stringify({
+        type: signalType,
+        payload: payload
+      }),
+      timestamp: Date.now()
+    }, { requireAck: true });
+  }
+
+  /**
    * 注册特定类型消息的回调
    */
   on(messageType: string, callback: (data: any) => void): void {

@@ -42,15 +42,24 @@ export class SenderKeySession {
         return new SenderKeySession(state, senderId, orderId);
     }
 
-    public static createSession(myUserId: string, orderId: string): SenderKeySession {
+    public static createSession(
+        myUserId: string,
+        orderId: string,
+        existingSigningKeyPair: { publicKey: Uint8Array; privateKey: Uint8Array }
+    ): SenderKeySession {
         const senderKeyId = Math.floor(Date.now() / 1000);
-        const signingKeyPair = cryptoHelper.createSigningKeyPair();
         const chainKeySeed = cryptoHelper.createSymmetricKey();
+
+        let signingPublicKey: Uint8Array;
+        let signingPrivateKey: Uint8Array;
+        // console.log(`[SenderKey] Reusing existing signing key for ${orderId}`);
+        signingPublicKey = existingSigningKeyPair.publicKey;
+        signingPrivateKey = existingSigningKeyPair.privateKey;
 
         const state: ISenderKeyState = {
             senderKeyId,
-            signingPublicKey: signingKeyPair.publicKey,
-            signingPrivateKey: signingKeyPair.privateKey,
+            signingPublicKey: signingPublicKey,
+            signingPrivateKey: signingPrivateKey,
             chainKey: { iteration: 0, key: chainKeySeed },
             messageKeys: new Map(),
         };

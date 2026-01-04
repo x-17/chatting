@@ -364,16 +364,28 @@ async function handlePreviewFile(message: ChatMessage) {
 
 // 初始化
 onMounted(async () => {
+  mockLogin(
+    {
+      id: "101",
+      openId: "openid1",
+      userName: "user1",
+      tenantId: 101,
+    },
+    {
+      token:
+        "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiJvcGVuaWQxIiwidGVuYW50SWQiOjEwMSwiaWQiOjEsImV4cCI6MTc2NDE2MzMyNCwidXNlcm5hbWUiOiJ1c2VyMSJ9.b_6asDOMYxlisrb4NVTtcDm5il7EkQqw7asC4VXSbMo",
+    }
+  );
   // mockLogin(
   //   {
-  //     id: "101",
-  //     openId: "openid1",
-  //     userName: "user1",
-  //     tenantId: 101,
+  //     id: "102",
+  //     openId: "openid2",
+  //     userName: "user2",
+  //     tenantId: 102,
   //   },
   //   {
   //     token:
-  //       "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiJvcGVuaWQxIiwidGVuYW50SWQiOjEwMSwiaWQiOjEsImV4cCI6MTc2MzE1OTMxNiwidXNlcm5hbWUiOiJ1c2VyMSJ9.0IzfTLNn-wiurYT6oVSk09zpYUqeRQ9bhcaMbv9fkPM",
+  //       "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiJvcGVuaWQyIiwidGVuYW50SWQiOjEwMiwiaWQiOjIsImV4cCI6MTc2NDE2MzMyNSwidXNlcm5hbWUiOiJ1c2VyMiJ9.iLkSRhnR-_5BNjiQygU_j7obwMIfhXtk6uKTBCYiKG4",
   //   }
   // );
   mockLogin(
