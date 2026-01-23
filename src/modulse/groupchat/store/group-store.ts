@@ -96,11 +96,15 @@ export const groupStore: IGroupStore = {
     async isMember(orderId: string, userId: string): Promise<boolean> {
         const groupState = await this.get(orderId);
 
-        // 如果群组本地状态不存在，默认视为 false (或者根据需求处理)
         if (!groupState) {
+            console.warn(`[GroupStore] isMember: Group ${orderId} not found`);
             return false;
         }
 
-        return groupState.members.includes(userId);
+        const result = groupState.members.includes(String(userId));
+        if (!result) {
+            console.warn(`[GroupStore] isMember check failed for ${userId}. Members:`, groupState.members);
+        }
+        return result;
     }
 };

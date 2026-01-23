@@ -14,6 +14,8 @@
             </el-icon>
           </el-button>
         </el-badge>
+
+
         <el-dropdown @command="handleUserAction">
           <span class="user-info">
             <el-avatar :size="32">{{ userInitial }}</el-avatar>
@@ -45,7 +47,7 @@
           <MessageArea :order="activeOrder" :messages="currentMessages" :loading="messagesLoading"
             @load-more="handleLoadMoreMessages" @is-agree-contract="handleIsAgreeContract" @download="handleDonloadFile"
             @preview="handlePreviewFile" />
-          <MessageInput :order="activeOrder" :disabled="!canSendMessage" @send="handleSendMessage"
+          <MessageInput :order="activeOrder" :disabled="!canSendMessage" :is-connected="isWebSocketConnected" @send="handleSendMessage"
             @send-file="handleSendFile" @send-contract="handleSendContract" />
         </template>
         <div v-else class="empty-state">
@@ -115,7 +117,6 @@ import { ref, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { Message, DArrowLeft, DArrowRight } from "@element-plus/icons-vue";
-import { useAuthStore } from "../../auth/services/auth.store";
 import OrderList from "../components/OrderList.vue";
 import MessageArea from "../components/MessageArea.vue";
 import MessageInput from "../components/MessageInput.vue";
@@ -124,13 +125,11 @@ import { useChat, type ContractDetails } from "../composables/useChat";
 import { useOrderList } from "../composables/useOrderList";
 import mockLogin from "../../../utils/mockLogin";
 import type { ChatMessage } from "../types/chat.types";
-import { ContractService } from "../../contracts/services/contract.service";
 import type { P2PMessage } from "../../signal/types/message.types";
 import { useMessageHandlers } from "../composables/useMessageHandlers";
 
 const route = useRoute();
 const router = useRouter();
-const authStore = useAuthStore();
 
 const showOrderDetail = ref(true);
 
@@ -146,8 +145,12 @@ const {
   selectOrder,
 } = useOrderList();
 
+import { useOrderStore } from '../../orders/store/order.store';
+const orderStore = useOrderStore();
+
+
 // 初始化消息处理器，传入 activeOrderId 以便在当前会话时不增加未读数
-useMessageHandlers(activeOrderId);
+const { isWebSocketConnected, syncOfflineMessages } = useMessageHandlers(activeOrderId);
 
 const {
   currentMessages,
@@ -364,18 +367,18 @@ async function handlePreviewFile(message: ChatMessage) {
 
 // 初始化
 onMounted(async () => {
-  mockLogin(
-    {
-      id: "101",
-      openId: "openid1",
-      userName: "user1",
-      tenantId: 101,
-    },
-    {
-      token:
-        "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiJvcGVuaWQxIiwidGVuYW50SWQiOjEwMSwiaWQiOjEsImV4cCI6MTc2NDE2MzMyNCwidXNlcm5hbWUiOiJ1c2VyMSJ9.b_6asDOMYxlisrb4NVTtcDm5il7EkQqw7asC4VXSbMo",
-    }
-  );
+  // mockLogin(
+  //   {
+  //     id: "101",
+  //     openId: "openid1",
+  //     userName: "user1",
+  //     tenantId: 101,
+  //   },
+  //   {
+  //     token:
+  //       "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiJvcGVuaWQxIiwidGVuYW50SWQiOjEwMSwiaWQiOjEsImV4cCI6MTc2NDE2MzMyNCwidXNlcm5hbWUiOiJ1c2VyMSJ9.b_6asDOMYxlisrb4NVTtcDm5il7EkQqw7asC4VXSbMo",
+  //   }
+  // );
   // mockLogin(
   //   {
   //     id: "102",
@@ -388,22 +391,22 @@ onMounted(async () => {
   //       "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiJvcGVuaWQyIiwidGVuYW50SWQiOjEwMiwiaWQiOjIsImV4cCI6MTc2NDE2MzMyNSwidXNlcm5hbWUiOiJ1c2VyMiJ9.iLkSRhnR-_5BNjiQygU_j7obwMIfhXtk6uKTBCYiKG4",
   //   }
   // );
-  mockLogin(
-    {
-      id: "196",
-      openId: "openid2",
-      userName: "user2",
-      tenantId: 196,
-    },
-    {
-      token:
-        "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiI2NGQ0N2ZhNWU0YjA1YTA3N2JhMWQ1OTciLCJ0ZW5hbnRJZCI6MTk2LCJpZCI6MTcsImV4cCI6MTc2NDg2OTAxMCwidXNlcm5hbWUiOiJtYXRlbmd6aGFvIn0.cY_P6ALGVyxPrUtlfX4hqqo29pyW-yHdmc3NAsRdTTs",
-    }
-  );
+  // mockLogin(
+  //   {
+  //     id: "196",
+  //     openId: "openid2",
+  //     userName: "user2",
+  //     tenantId: 196,
+  //   },
+  //   {
+  //     token:
+  //       "eyJhbGciOiJIUzI1NiJ9.eyJvcGVuSWQiOiI2NGQ0N2ZhNWU0YjA1YTA3N2JhMWQ1OTciLCJ0ZW5hbnRJZCI6MTk2LCJpZCI6MTcsImV4cCI6MTc2NDg2OTAxMCwidXNlcm5hbWUiOiJtYXRlbmd6aGFvIn0.cY_P6ALGVyxPrUtlfX4hqqo29pyW-yHdmc3NAsRdTTs",
+  //   }
+  // );
   console.log("[ChatMain] Component mounted");
 
   await loadOrders();
-  // await
+  await syncOfflineMessages();
 
   console.log("[ChatMain] Orders loaded:", orders.value.length);
 
@@ -527,5 +530,9 @@ onMounted(async () => {
   overflow-y: auto;
   background: #fff;
   padding: 20px;
+}
+
+.group-chat-badge {
+  margin-right: 16px;
 }
 </style>

@@ -165,9 +165,10 @@ export class WebSocketManager {
     const maxRetries = options.maxRetries ?? this.config.ack.retry.maxAttempts;
 
     if (!this.isConnected()) {
-      console.warn("[WebSocket] Cannot send - not connected");
+      console.warn(`[WebSocket] Cannot send - not connected. Status: ${this.status}, ReadyState: ${this.ws?.readyState}, WS exists: ${!!this.ws}`);
       throw new Error("WebSocket not connected");
     }
+
 
     // ✅ 确保消息有 id（如果没有则生成）
     const messageToSend: WebSocketMessage = {
@@ -242,9 +243,9 @@ export class WebSocketManager {
    * 兼容性封装：发送群组消息
    */
   async sendGroupMessage(
-      orderId: string,
-      encryptedContent: string,
-      type: 'text' | 'file' = 'text'
+    orderId: string,
+    encryptedContent: string,
+    type: 'text' | 'file' = 'text'
   ): Promise<any> {
     return await this.send({
       id: this.generateMessageId(),
@@ -260,9 +261,9 @@ export class WebSocketManager {
    * 实际上是发送一条 type='system', content='JSON...' 的标准消息
    */
   async sendGroupSignal(
-      orderId: string,
-      signalType: string,
-      payload: any
+    orderId: string,
+    signalType: string,
+    payload: any
   ): Promise<any> {
     return await this.send({
       id: this.generateMessageId(),
@@ -593,10 +594,11 @@ export class WebSocketManager {
    * ✅ 简化的 ACK 处理 - 使用 id 字段直接关联
    */
   private handleAck(ackMessage: WebSocketMessage): void {
-    const messageId = ackMessage.id; // ✅ 直接使用 id 字段
+    // 兼容：优先使用 originalId（表示响应某条消息），如果没有则使用 id
+    const messageId = ackMessage.originalId || ackMessage.id;
 
     if (!messageId) {
-      console.warn("[WebSocket] ACK message missing id");
+      console.warn("[WebSocket] ACK message missing id or originalId");
       return;
     }
 
@@ -891,13 +893,15 @@ export class WebSocketManager {
 const managerInstances = new Map<string, WebSocketManager>();
 
 export function getWebSocketManager(
-  userId: string,
+  userId: string | number,
   wsUrl?: string
 ): WebSocketManager {
-  if (!managerInstances.has(userId)) {
-    managerInstances.set(userId, new WebSocketManager(userId, wsUrl));
+  const key = String(userId); // ✅ Force string key
+  if (!managerInstances.has(key)) {
+    console.log(`[WebSocketManager] Creating new instance for ${key}`);
+    managerInstances.set(key, new WebSocketManager(key, wsUrl));
   }
-  return managerInstances.get(userId)!;
+  return managerInstances.get(key)!;
 }
 
 export function cleanupWebSocketManagers(): void {

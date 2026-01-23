@@ -246,6 +246,77 @@ export const useAuthStore = defineStore("auth", {
       }
     },
 
+    async loginWithPassword(data: any): Promise<boolean> {
+      if (this.isProcessing) return false;
+
+      try {
+        this.isProcessing = true;
+        this.status = "loading";
+        this.errorMessage = "";
+
+        const response = await this.withTimeout(
+          authApiService.login(data),
+          CONFIG.REQUEST_TIMEOUT
+        );
+
+        if (response.code === 1) {
+          return this.handleExistingUser(response.data);
+        }
+
+        throw new Error(response.msg || "登录失败");
+      } catch (error: any) {
+        return this.handleAuthError(error);
+      } finally {
+        this.isProcessing = false;
+      }
+    },
+
+    async registerWithPassword(data: { username: string; openId: string }): Promise<boolean> {
+      if (this.isProcessing) return false;
+
+      try {
+        this.isProcessing = true;
+        this.status = "loading";
+        this.errorMessage = "";
+
+        // 1. 前端生成 tenantId (使用时间戳+随机数确保唯一性)
+        // 使用 1000000000 + 随机数，避免与可能的保留ID冲突
+        const tenantIdVal = Math.floor(1000000000 + Math.random() * 900000000);
+        this.tenantId = String(tenantIdVal);
+
+        // 2. 生成密钥
+        const publicKeys = await this.retryOperation(
+          () => e2eeService.initializeKeysForUser(this.tenantId!),
+          CONFIG.MAX_RETRY_ATTEMPTS,
+          "密钥生成失败，正在重试..."
+        );
+
+        // 3. 构建用户信息
+        const userInfo: User = {
+          id: this.tenantId, // 系统内ID
+          openId: data.openId, // 密码
+          userName: data.username,
+          tenantId: tenantIdVal,
+        };
+
+        // 4. 调用注册接口 (直接注册 keys + 账号信息)
+        const registerRes = await this.withTimeout(
+          authApiService.registerUserKeysWithPsw(publicKeys, userInfo),
+          CONFIG.REQUEST_TIMEOUT
+        );
+
+        if (registerRes.code === 1) {
+          return this.handleExistingUser(registerRes.data);
+        }
+
+        throw new Error(registerRes.msg || "账号注册失败");
+      } catch (error: any) {
+        return this.handleAuthError(error);
+      } finally {
+        this.isProcessing = false;
+      }
+    },
+
     async handleSsoCallback(code: string): Promise<boolean> {
       if (this.isProcessing) {
         console.warn("[Auth] Authentication in progress");

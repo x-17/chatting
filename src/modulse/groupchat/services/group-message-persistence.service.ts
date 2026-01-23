@@ -19,7 +19,7 @@ interface GroupChatDB extends DBSchema {
 
 export class GroupMessagePersistenceService {
     private dbName: string;
-    private dbVersion = 1;
+    private dbVersion = 3; // Bump version to force upgrade check
     private db: IDBPDatabase<GroupChatDB> | null = null;
 
     constructor(private userId: string) {
@@ -34,16 +34,22 @@ export class GroupMessagePersistenceService {
         if (this.db) return;
 
         this.db = await openDB<GroupChatDB>(this.dbName, this.dbVersion, {
-            upgrade(db) {
+            upgrade(db, oldVersion, newVersion, tx) {
                 // 创建对象仓库
+                let store;
                 if (!db.objectStoreNames.contains('group_messages')) {
-                    const store = db.createObjectStore('group_messages', {
+                    store = db.createObjectStore('group_messages', {
                         keyPath: 'id',
                     });
                     // 创建索引
                     store.createIndex('by_order_id', 'orderId');
                     store.createIndex('by_timestamp', 'timestamp');
-                    // 创建复合索引 [orderId, timestamp]，用于高效的分页查询
+                } else {
+                    store = tx.objectStore('group_messages');
+                }
+
+                // 独立检查并创建复合索引
+                if (!store.indexNames.contains('by_order_timestamp')) {
                     store.createIndex('by_order_timestamp', ['orderId', 'timestamp']);
                 }
             },
@@ -137,8 +143,37 @@ export class GroupMessagePersistenceService {
     /**
      * 删除消息
      */
-    async deleteMessage(messageId: string): Promise<void> {
+    /**
+     * 统计指定时间后的消息数量 (用于计算未读数)
+     */
+    async countMessagesAfter(orderId: string, timestamp: number): Promise<number> {
         if (!this.db) await this.init();
-        await this.db!.delete('group_messages', messageId);
+
+        try {
+            // 构造查询范围：(orderId, timestamp) -> (orderId, Infinity]
+            const range = IDBKeyRange.bound(
+                [orderId, timestamp],
+                [orderId, Date.now() + 31536000000000], // ~1000 years
+                true,
+                false
+            );
+
+            const tx = this.db!.transaction('group_messages', 'readonly');
+            // Ensure index exists (should be guaranteed by init upgrade if version bumped)
+            if (!tx.store.indexNames.contains('by_order_timestamp')) {
+                console.warn('[GroupPersistence] Index by_order_timestamp missing!');
+                return 0;
+            }
+            const index = tx.store.index('by_order_timestamp');
+            const count = await index.count(range);
+
+            console.log(`[GroupPersistence] countMessagesAfter: orderId=${orderId}, after=${timestamp}, count=${count}`);
+            return count;
+        } catch (error) {
+            console.error('[GroupPersistence] countMessagesAfter failed:', error);
+            return 0;
+        }
     }
 }
+
+export const groupMessagePersistenceService = new GroupMessagePersistenceService('default');

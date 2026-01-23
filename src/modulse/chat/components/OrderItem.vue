@@ -26,6 +26,9 @@
         <el-tag :type="order.type === 'purchase' ? 'primary' : 'success'" size="small">
           {{ order.type === 'purchase' ? '买入' : '卖出' }}
         </el-tag>
+        <el-tag v-if="order.conversationType === 'group'" size="small" type="warning" effect="dark">
+            群聊
+        </el-tag>
       </div>
 
       <div class="last-message">

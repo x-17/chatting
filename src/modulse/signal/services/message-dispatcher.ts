@@ -81,9 +81,9 @@ export class MessageDispatcher {
         }
 
         // 3️⃣ 业务消息：根据 recipientId 区分 P2P 和群聊
-        if (messageType === 'text' || messageType === 'file' || messageType === 'contract' || messageType === 'key_distribution') {
-            // ✅ 关键判断：有 recipientId 且不为空 → P2P
-            if (recipientId && recipientId !== null && recipientId !== '' && recipientId !== 'null') {
+        if (messageType === 'text' || messageType === 'file' || messageType === 'contract' || messageType === 'key_distribution' || messageType === 'key_request') {
+            // ✅ 关键判断：有 recipientId 且不为空且不为'none' → P2P
+            if (recipientId && recipientId !== null && recipientId !== '' && recipientId !== 'null' && recipientId !== 'none') {
                 this.dispatchToP2P(messageType, data);
             }
             // ✅ 无 recipientId → 群聊
@@ -120,6 +120,11 @@ export class MessageDispatcher {
                 case 'key_distribution':
                     // ✅ 密钥分发
                     p2pRouter.handleKeyDistributionMessage(data);
+                    break;
+
+                case 'key_request':
+                    // ✅ 密钥请求
+                    p2pRouter.handleIncomingMessage(data);
                     break;
 
                 default:

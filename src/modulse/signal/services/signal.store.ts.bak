@@ -6,7 +6,9 @@ import { fromBase64, toBase64 } from '../utils/e2ee.utils';
 import type { StorableIdentity } from '../types';
 
 // IndexedDB Stores
-// Note: We now create stores dynamically in the constructor based on userId to ensure isolation.
+const identityStore: UseStore = createStore('e2ee-identity-store', 'identities');
+const sessionStore: UseStore = createStore('e2ee-session-store', 'sessions');
+const trustStore: UseStore = createStore('e2ee-trust-store', 'trusted-keys');
 
 // 会话状态回调接口
 export interface SessionStateInfo {
@@ -33,73 +35,19 @@ export class IndexedDbSignalProtocolStore implements StorageType {
         lastAccessed: number;
     }>();
 
-    // ✅ Instance-level stores for isolation
-    private identityStore: UseStore;
-    private sessionStore: UseStore;
-    private trustStore: UseStore;
-
     constructor(
         userId: string,
         onSessionUpdate?: (stateInfo: SessionStateInfo) => void
     ) {
         this._userId = userId;
         this._onSessionUpdate = onSessionUpdate;
-
-        // ✅ 关键修复：每个 Store 使用独立的数据库名称，避免 idb-keyval 的多 store 限制
-        // idb-keyval 的 createStore 如果使用相同的 dbName 但不同的 storeName，可能会在数据库已存在时无法正确创建/打开新的 store
-        // 因此，最安全的方法是为每个用途使用完全独立的数据库
-
-        console.log(`[Store] Initializing isolated stores for user ${userId}...`);
-
-        this.identityStore = createStore(`signal_v2_identity_${userId}`, 'identities');
-        this.sessionStore = createStore(`signal_v2_session_${userId}`, 'sessions');
-        this.trustStore = createStore(`signal_v2_trust_${userId}`, 'trusted-keys');
-
-        // ✅ 自动迁移：检查新库是否有身份信息，如果没有，尝试从旧库迁移
-        // 这样可以保留用户的密钥对（公钥/私钥），避免需要重新向服务器注册
-        this._migrateLegacyIdentity().then(() => {
-            this._loadSessionMetadata();
-        });
-    }
-
-    /**
-     * 迁移旧的身份数据
-     * 从全局的 e2ee-identity-store 迁移到用户隔离的 store
-     */
-    private async _migrateLegacyIdentity(): Promise<void> {
-        try {
-            // 1. 检查新库中是否有数据
-            // Use this.identityStore (isolated)
-            const currentIdentity = await get<StorableIdentity>(this._userId, this.identityStore);
-            if (currentIdentity) {
-                // 已有数据，无需迁移
-                return;
-            }
-
-            console.log(`[Store] Checking for legacy identity to migrate for ${this._userId}...`);
-
-            // 2. 访问旧的全局库
-            // 注意：这里硬编码旧的 store 名称 'e2ee-identity-store'（必须与旧代码一致）
-            const legacyIdentityStore = createStore('e2ee-identity-store', 'identities');
-            const legacyIdentity = await get<StorableIdentity>(this._userId, legacyIdentityStore);
-
-            if (legacyIdentity) {
-                console.log(`[Store] Found legacy identity for ${this._userId}, migrating...`);
-                // 3. 复制到新库
-                await set(this._userId, legacyIdentity, this.identityStore);
-                console.log(`[Store] Migration successful!`);
-            } else {
-                console.log(`[Store] No legacy identity found.`);
-            }
-        } catch (error) {
-            console.error('[Store] Migration failed:', error);
-        }
+        this._loadSessionMetadata();
     }
 
     private async _loadSessionMetadata(): Promise<void> {
         try {
             const metadataKey = `metadata-${this._userId}`;
-            const stored = await get(metadataKey, this.sessionStore);
+            const stored = await get(metadataKey, sessionStore);
             if (stored) {
                 this._sessionMetadata = new Map(Object.entries(stored));
             }
@@ -112,7 +60,7 @@ export class IndexedDbSignalProtocolStore implements StorageType {
         try {
             const metadataKey = `metadata-${this._userId}`;
             const obj = Object.fromEntries(this._sessionMetadata);
-            await set(metadataKey, obj, this.sessionStore);
+            await set(metadataKey, obj, sessionStore);
         } catch (error) {
             console.warn('[Store] Failed to save session metadata:', error);
         }
@@ -150,13 +98,11 @@ export class IndexedDbSignalProtocolStore implements StorageType {
     }
 
     private async _getIdentity(): Promise<StorableIdentity | undefined> {
-        // ✅ 使用实例隔离的 identityStore
-        return get<StorableIdentity>(this._userId, this.identityStore);
+        return get<StorableIdentity>(this._userId, identityStore);
     }
 
     private async _setIdentity(identity: StorableIdentity): Promise<void> {
-        // ✅ 使用实例隔离的 identityStore
-        await set(this._userId, identity, this.identityStore);
+        await set(this._userId, identity, identityStore);
     }
 
     // ===================== Identity =====================
@@ -175,8 +121,7 @@ export class IndexedDbSignalProtocolStore implements StorageType {
     }
 
     async saveIdentity(encodedAddress: string, publicKey: ArrayBuffer): Promise<boolean> {
-        // ✅ 使用实例隔离的 trustStore
-        const existing = await get<string>(`identity-${encodedAddress}`, this.trustStore);
+        const existing = await get<string>(`identity-${encodedAddress}`, trustStore);
         const pubKeyB64 = toBase64(new Uint8Array(publicKey));
 
         if (existing && existing !== pubKeyB64) {
@@ -184,7 +129,7 @@ export class IndexedDbSignalProtocolStore implements StorageType {
             return false;
         }
 
-        await set(`identity-${encodedAddress}`, pubKeyB64, this.trustStore);
+        await set(`identity-${encodedAddress}`, pubKeyB64, trustStore);
         return true;
     }
 
@@ -192,13 +137,12 @@ export class IndexedDbSignalProtocolStore implements StorageType {
         encodedAddress: string,
         identityKey: ArrayBuffer
     ): Promise<boolean> {
-        // ✅ 使用实例隔离的 trustStore
-        const known = await get<string>(`identity-${encodedAddress}`, this.trustStore);
+        const known = await get<string>(`identity-${encodedAddress}`, trustStore);
         const current = toBase64(new Uint8Array(identityKey));
 
         if (!known) {
             console.warn(`[Store] First encounter with identity: ${encodedAddress}`);
-            await set(`identity-${encodedAddress}`, current, this.trustStore);
+            await set(`identity-${encodedAddress}`, current, trustStore);
             return true;
         }
 
@@ -323,8 +267,7 @@ export class IndexedDbSignalProtocolStore implements StorageType {
             await this._saveSessionMetadata();
         }
 
-        // ✅ 使用实例隔离的 sessionStore
-        const session = await get<string>(identifier, this.sessionStore);
+        const session = await get<string>(identifier, sessionStore);
         if (session) {
             console.log(`[Store] 找到现有会话: ${identifier}`);
         } else {
@@ -342,8 +285,7 @@ export class IndexedDbSignalProtocolStore implements StorageType {
         }
 
         // 更新会话元数据
-        // ✅ 使用实例隔离的 sessionStore
-        const existingSession = await get<string>(identifier, this.sessionStore);
+        const existingSession = await get<string>(identifier, sessionStore);
         const isNew = !existingSession;
 
         let metadata = this._sessionMetadata.get(identifier);
@@ -362,7 +304,7 @@ export class IndexedDbSignalProtocolStore implements StorageType {
         this._sessionMetadata.set(identifier, metadata);
         await this._saveSessionMetadata();
 
-        // 调用回调函数
+        // 调用回调函数，提供简化的会话状态信息
         if (this._onSessionUpdate) {
             const stateInfo: SessionStateInfo = {
                 identifier,
@@ -373,6 +315,7 @@ export class IndexedDbSignalProtocolStore implements StorageType {
                     userId: this._userId,
                     recipientId
                 }
+                // ❌ 删除棘轮状态信息
             };
 
             try {
@@ -386,16 +329,14 @@ export class IndexedDbSignalProtocolStore implements StorageType {
         await this._cleanupExpiredSessions();
 
         // 存储实际的会话记录
-        // ✅ 使用实例隔离的 sessionStore
-        return set(identifier, record, this.sessionStore);
+        return set(identifier, record, sessionStore);
     }
 
     async removeSession(identifier: string): Promise<void> {
         console.log(`[Store] 删除会话: ${identifier}`);
         this._sessionMetadata.delete(identifier);
         await this._saveSessionMetadata();
-        // ✅ 使用实例隔离的 sessionStore
-        await set(identifier, undefined, this.sessionStore);
+        await set(identifier, undefined, sessionStore);
     }
 
     /**

@@ -5,10 +5,12 @@ import { useAuthStore } from "../../auth/services/auth.store";
 import { mockService } from "../../mock/mock-service";
 import type { ChatMessage, Order } from "../types/chat.types";
 import { getEnhancedP2PRouter } from "../../signal/services/p2p-message-router.enhanced";
+import { getGroupMessageRouter } from "../../groupchat/services/enhanced-group-message-router";
 import { getMessagePersistenceService } from "../../signal/services/message-persistence.service";
 import type { P2PMessage } from "../../signal/types/message.types";
 import { ElMessage } from "element-plus";
 import { ContractService } from "../../contracts/services/contract.service";
+import type { GroupMessage } from "../../groupchat/types/group-message.types";
 
 interface ChatState {
   conversations: Map<string, ChatMessage[]>;
@@ -41,10 +43,7 @@ export function useChat() {
 
   // 使用单例路由
   const EnhancedP2PMessageRouterInstance = getEnhancedP2PRouter(String(myUserId));
-
-  // 移除 MessagePersistenceService 的初始化，改用 getMessagePersistenceService
-  // 移除 onMessage 监听，由 useMessageHandlers 统一处理
-
+  const GroupMessageRouterInstance = getGroupMessageRouter(String(myUserId));
 
   const currentMessages = computed(() => {
     if (!currentConversationId.value) return [];
@@ -62,6 +61,18 @@ export function useChat() {
   async function loadConversationMessages(order: Order): Promise<void> {
     const conversationId = order.conversationId;
     currentConversationId.value = conversationId;
+
+    if (order.conversationType === 'group' && myUserId) {
+      // Mark as read locally
+      const { GroupMessageSyncService } = await import("../../groupchat/services/group-message-sync.service");
+      const syncService = new GroupMessageSyncService(String(myUserId));
+      syncService.markAsRead(conversationId);
+
+      // Update store immediately to clear badge
+      const { useOrderStore } = await import("../../orders/store/order.store");
+      const orderStore = useOrderStore();
+      orderStore.updateOrderWithMessage(order.id, { unreadCount: 0 });
+    }
 
     console.log("[useChat] Loading messages for:", conversationId);
 
@@ -84,7 +95,6 @@ export function useChat() {
           const mockMsgs = await mockService.getP2PMessages(
             order.conversationId
           );
-          // console.log("------------------------", mockMsgs);
 
           messages = mockMsgs.map((msg) => ({
             ...msg,
@@ -108,18 +118,28 @@ export function useChat() {
           sessionStorage.getItem("auth_current_user_id") ||
           "";
 
-        // 使用单例持久化服务
-        const persistenceService = getMessagePersistenceService(String(currentUserId));
+        if (order.conversationType === 'group') {
+          console.log("[useChat] Loading group messages from GroupRouter");
+          const groupMsgs = await GroupMessageRouterInstance.getHistory(order.conversationId);
+          messages = groupMsgs.map((msg) => ({
+            ...msg,
+            __conversationType: 'group',
+            senderId: msg.senderId
+          })) as ChatMessage[];
+        } else {
+          // 使用单例持久化服务
+          const persistenceService = getMessagePersistenceService(String(currentUserId));
 
-        const Msgs = await persistenceService.getOrderMessages(
-          order.id
-        );
-        console.log(Msgs);
+          const Msgs = await persistenceService.getOrderMessages(
+            order.id
+          );
+          console.log(Msgs);
 
-        messages = Msgs.map((msg) => ({
-          ...msg,
-          __conversationType: "p2p" as const,
-        }));
+          messages = Msgs.map((msg) => ({
+            ...msg,
+            __conversationType: (msg as any).groupId ? "group" : "p2p",
+          }));
+        }
       }
 
       // 按时间排序
@@ -136,7 +156,7 @@ export function useChat() {
   }
 
   /**
-   * 发送文本消息（Mock 版本）
+   * 发送文本消息
    */
   async function sendMessage(order: Order, content: string): Promise<void> {
     console.log("[useChat] Sending message:", content);
@@ -149,45 +169,65 @@ export function useChat() {
 
     // 🔧 Mock 模式：直接添加消息到本地
     if (mockService.enabled) {
-      addMessageToConversation(order.conversationId, optimisticMessage);
-      console.log("[useChat] Message sent (mock)");
+      // Mock send logic not strictly needed here as we use optimistic update
     } else {
-      const res = await EnhancedP2PMessageRouterInstance.sendMessage(
-        order.id,
-        content,
-        "text",
-        String(order.otherParty.id)
-      );
-      console.log("res", res);
+      console.log(`[useChat] Sending message to ${order.conversationType} order: ${order.conversationId}`);
+      let result: { success: boolean; error?: string } = { success: false };
 
-      const optimisticMessage: ChatMessage = {
-        id: messageId,
-        type: "text",
-        senderId: myUserId,
-        orderId: order.id,
-        recipientId:
-          order.conversationType === "p2p" ? order.otherParty.id : undefined,
-        groupId:
-          order.conversationType === "group" ? order.conversationId : undefined,
-        content: content,
-        timestamp: Date.now(),
-        status: res.success ? "sent" : "failed", // Mock 模式直接显示为已发送
-        __conversationType: order.conversationType,
-      };
-      addMessageToConversation(order.conversationId, optimisticMessage);
-      console.log("optimisticMessage", optimisticMessage);
-
-      if (!res.success || res.error) {
-        throw new Error(res.error || "文件发送失败（业务错误）");
+      try {
+        if (order.conversationType === 'group') {
+          console.log("[useChat] Using GroupMessageRouter");
+          const msg = await GroupMessageRouterInstance.sendGroupTextMessage(
+            order.conversationId,
+            content
+          );
+          result = { success: msg.status === 'sent' };
+        } else {
+          console.log("[useChat] Using EnhancedP2PMessageRouter");
+          result = await EnhancedP2PMessageRouterInstance.sendMessage(
+            order.id,
+            content,
+            "text",
+            String(order.otherParty.id)
+          );
+        }
+      } catch (e: any) {
+        console.error("Send message error:", e);
+        result = { success: false, error: e.message };
       }
-      // return optimisticMessage; // 返回成功的消息数据
-      console.log("[useChat] Message sent (via P2P router)");
-    }
 
+      console.log("Send result", result);
+
+      if (order.conversationType === 'group') {
+        console.log("[useChat] Group message handled by router event");
+      } else {
+        const optimisticMessage: ChatMessage = {
+          id: messageId,
+          type: "text",
+          senderId: myUserId,
+          orderId: order.id,
+          recipientId:
+            order.conversationType === "p2p" ? order.otherParty.id : undefined,
+          groupId:
+            order.conversationType === "group" ? order.conversationId : undefined,
+          content: content,
+          timestamp: Date.now(),
+          status: result.success ? "sent" : "failed",
+          __conversationType: order.conversationType,
+        };
+        addMessageToConversation(order.conversationId, optimisticMessage);
+        console.log("optimisticMessage", optimisticMessage);
+      }
+
+      if (!result.success || result.error) {
+        throw new Error(result.error || "发送失败（业务错误）");
+      }
+      console.log("[useChat] Message sent");
+    }
   }
 
   /**
-   * 发送文件消息（Mock 版本）
+   * 发送文件消息
    */
   async function sendFile(order: Order, file: File): Promise<ChatMessage> {
     console.log("[useChat] Sending file:", file.name);
@@ -200,43 +240,78 @@ export function useChat() {
 
     // 🔧 Mock 模式：直接添加消息到本地
     if (mockService.enabled) {
-      addMessageToConversation(order.conversationId, optimisticMessage);
-      console.log("[useChat] File sent (mock)");
-      return optimisticMessage;
-    } else {
-      let res = await EnhancedP2PMessageRouterInstance.sendFile(
-        order.id,
-        file,
-        String(order.otherParty.id)
-      );
       const optimisticMessage: ChatMessage = {
         id: messageId,
         type: "file",
         senderId: myUserId,
-        orderId: order.id,
-        recipientId:
-          order.conversationType === "p2p"
-            ? String(order.otherParty.id)
-            : undefined,
-        groupId:
-          order.conversationType === "group" ? order.conversationId : undefined,
+        orderId: order.id, // Keeping orderId for compatibility
         content: `[文件] ${file.name}`,
         timestamp: Date.now(),
-        status: res.success ? "sent" : "failed",
-        metadata: {
-          fileName: file.name,
-          fileSize: file.size,
-          mimeType: file.type,
-        },
+        status: "sent",
+        metadata: { fileName: file.name, fileSize: file.size, mimeType: file.type },
         __conversationType: order.conversationType,
       };
       addMessageToConversation(order.conversationId, optimisticMessage);
-      if (!res.success || res.error) {
-        throw new Error(res.error || "文件发送失败（业务错误）");
+      console.log("[useChat] File sent (mock)");
+      return optimisticMessage;
+
+    } else {
+      let res;
+      if (order.conversationType === 'group') {
+        try {
+          const groupMsg = await GroupMessageRouterInstance.sendGroupFileMessage(
+            order.conversationId,
+            file
+          );
+
+          // Adapting GroupMessage to ChatMessage
+          const adaptedMsg: ChatMessage = {
+            ...groupMsg,
+            __conversationType: 'group'
+          } as any;
+
+          return adaptedMsg;
+        } catch (e: any) {
+          throw new Error(e.message || "Group file send failed");
+        }
+      } else {
+        res = await EnhancedP2PMessageRouterInstance.sendFile(
+          order.id,
+          file,
+          String(order.otherParty.id)
+        );
+
+        const optimisticMessage: ChatMessage = {
+          id: messageId,
+          type: "file",
+          senderId: myUserId,
+          orderId: order.id,
+          recipientId:
+            order.conversationType === "p2p"
+              ? String(order.otherParty.id)
+              : undefined,
+          groupId:
+            order.conversationType === "group" ? order.conversationId : undefined,
+          content: `[文件] ${file.name}`,
+          timestamp: Date.now(),
+          status: res.success ? "sent" : "failed",
+          metadata: {
+            fileName: file.name,
+            fileSize: file.size,
+            mimeType: file.type,
+          },
+          __conversationType: order.conversationType,
+        };
+        addMessageToConversation(order.conversationId, optimisticMessage);
+
+        if (!res.success || res.error) {
+          throw new Error(res.error || "文件发送失败（业务错误）");
+        }
+        return optimisticMessage; // 返回成功的消息数据
       }
-      return optimisticMessage; // 返回成功的消息数据
     }
   }
+
   /**
    * 发送合同文件消息（Mock 版本）
    */
@@ -344,9 +419,14 @@ export function useChat() {
    * 下载文件
    */
   async function downLoadFile(
-    message: Extract<ChatMessage, P2PMessage>,
+    message: Extract<ChatMessage, P2PMessage> | GroupMessage | any,
     triggerDownload: boolean = true
   ): Promise<string> {
+    // Check if it is a group message
+    if (message.__conversationType === 'group' || message.groupId) {
+      return await GroupMessageRouterInstance.downloadGroupFile(message as GroupMessage);
+    }
+
     let res;
     if (message.type === "contract") {
       res = await EnhancedP2PMessageRouterInstance.downloadOrderContract(
@@ -371,9 +451,6 @@ export function useChat() {
   /**
    * 加载更多历史消息
    */
-  /**
-   * 加载更多历史消息
-   */
   async function loadMoreMessages(order: Order): Promise<void> {
     const conversationId = order.conversationId;
     console.log("[useChat] Load more messages for:", conversationId);
@@ -386,33 +463,46 @@ export function useChat() {
     try {
       const currentMsgs = state.value.conversations.get(conversationId) || [];
       const oldestMsg = currentMsgs[0];
+      const beforeTimestamp = oldestMsg ? oldestMsg.timestamp : Date.now();
+
+      // 注意: P2P 用的 sequence，Group 用的 timestamp
       const beforeSequence = oldestMsg ? (oldestMsg as P2PMessage).sequence : undefined;
 
       // Mock 模式暂不实现分页
       if (mockService.enabled) {
         // ... mock implementation if needed
       } else {
-        const currentUserId =
-          authStore.currentUserId ||
-          sessionStorage.getItem("auth_current_user_id") ||
-          "";
-        const persistenceService = getMessagePersistenceService(String(currentUserId));
+        let olderMsgs: any[] = [];
 
-        const olderMsgs = await persistenceService.getOrderMessages(
-          order.id,
-          20, // limit
-          beforeSequence
-        );
+        if (order.conversationType === 'group') {
+          console.log("[useChat] Loading more group messages");
+          olderMsgs = await GroupMessageRouterInstance.getHistory(conversationId, 20, beforeTimestamp);
+          olderMsgs = olderMsgs.map(msg => ({
+            ...msg,
+            __conversationType: 'group'
+          }));
+        } else {
+          const currentUserId =
+            authStore.currentUserId ||
+            sessionStorage.getItem("auth_current_user_id") ||
+            "";
+          const persistenceService = getMessagePersistenceService(String(currentUserId));
 
-        if (olderMsgs.length > 0) {
-          const newMessages = olderMsgs.map((msg) => ({
+          olderMsgs = await persistenceService.getOrderMessages(
+            order.id,
+            20, // limit
+            beforeSequence
+          );
+          olderMsgs = olderMsgs.map((msg) => ({
             ...msg,
             __conversationType: "p2p" as const,
           }));
+        }
 
+        if (olderMsgs.length > 0) {
           // 合并消息并去重
           const existingIds = new Set(currentMsgs.map(m => m.id));
-          const uniqueNewMessages = newMessages.filter(m => !existingIds.has(m.id));
+          const uniqueNewMessages = olderMsgs.filter(m => !existingIds.has(m.id)) as ChatMessage[];
 
           if (uniqueNewMessages.length > 0) {
             const allMessages = [...uniqueNewMessages, ...currentMsgs];
@@ -442,14 +532,12 @@ export function useChat() {
     const messages = state.value.conversations.get(conversationId) || [];
 
     const exists = messages.some((m) => m.id === message.id);
+    console.log(`[useChat] addMessageToConversation: ${conversationId}, msgId: ${message.id}, exists: ${exists}`);
     if (exists) {
       const index = messages.findIndex((m) => m.id === message.id);
       messages[index] = message;
     } else {
       messages.push(message);
-      // if (message.senderId == myUserId) {
-      //   totalUnreadCount.value += 1;
-      // }
     }
 
     messages.sort((a, b) => a.timestamp - b.timestamp);

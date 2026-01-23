@@ -28,4 +28,9 @@ export const authRoutes = [
       title: "模拟sso",
     },
   },
+  {
+    path: "/login-psw",
+    name: "LocalLogin",
+    component: () => import("../views/LocalLoginPage.vue"),
+  },
 ];

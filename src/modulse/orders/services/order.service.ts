@@ -2,7 +2,7 @@
 
 import { OrderApiService } from "./order-api.service";
 import { getEnhancedP2PRouter } from "../../signal/services/p2p-message-router.enhanced";
-import { getEnhancedGroupRouter } from "../../groupchat/services/enhanced-group-message-router";
+import { getGroupMessageRouter } from "../../groupchat/services/enhanced-group-message-router";
 import type { Order, CreateOrderRequest } from "../types/order.types";
 
 /**

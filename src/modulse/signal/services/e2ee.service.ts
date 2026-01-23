@@ -20,6 +20,41 @@ import { createAuthenticatedApiClient } from "../../utils/api-client";
 // 创建用于存储身份的 IndexedDB store
 const identityDbStore = createStore("e2ee-identity-store", "identities");
 
+// ========== 新增：简单的异步锁 ==========
+class AsyncLock {
+  private promise: Promise<void> = Promise.resolve();
+
+  async acquire<T>(task: () => Promise<T>): Promise<T> {
+    let release: () => void;
+
+    // 创建一个新的 Promise，它的 resolve 函数就是我们的释放器
+    const nextPromise = new Promise<void>(resolve => {
+      release = resolve;
+    });
+
+    // 等待上一个任务完成
+    const previousPromise = this.promise;
+
+    // 将当前任务加入链条：不管上一个任务成功还是失败，都要执行当前任务
+    // 这里的 catch 是为了防止上一个任务失败阻塞整个队列
+    this.promise = this.promise.then(() => nextPromise).catch(() => nextPromise);
+
+    // 等待上一个任务真正的完成（或者失败）后，再执行当前任务
+    try {
+      await previousPromise;
+    } catch {
+      // 忽略上一个任务的错误
+    }
+
+    try {
+      return await task();
+    } finally {
+      // 任务执行完（无论成功失败），释放锁，让下一个任务可以开始
+      release!();
+    }
+  }
+}
+
 // ========== 修改开始：新增类型定义 ==========
 
 /**
@@ -30,10 +65,10 @@ export interface DecryptionResult {
   content?: string;
   error?: string;
   errorType?:
-    | "SESSION_EXPIRED"
-    | "DECRYPTION_FAILED"
-    | "NETWORK_ERROR"
-    | "UNKNOWN_ERROR";
+  | "SESSION_EXPIRED"
+  | "DECRYPTION_FAILED"
+  | "NETWORK_ERROR"
+  | "UNKNOWN_ERROR";
   needsRecovery?: boolean;
 }
 
@@ -45,10 +80,10 @@ export interface EncryptionResult {
   ciphertext?: any;
   error?: string;
   errorType?:
-    | "SESSION_ERROR"
-    | "ENCRYPTION_FAILED"
-    | "NETWORK_ERROR"
-    | "UNKNOWN_ERROR";
+  | "SESSION_ERROR"
+  | "ENCRYPTION_FAILED"
+  | "NETWORK_ERROR"
+  | "UNKNOWN_ERROR";
 }
 
 /**
@@ -164,6 +199,20 @@ export async function getSigningPrivateKey(
  * E2EE模块的主服务 - 增强版本
  */
 export const e2eeService = {
+  // ✅ 会话锁 Map
+  sessionLocks: new Map<string, AsyncLock>(),
+
+  /**
+   * 获取或创建用户的会话锁
+   */
+  getLock(userId: string, targetId: string): AsyncLock {
+    const key = `${userId}-${targetId}`;
+    if (!this.sessionLocks.has(key)) {
+      this.sessionLocks.set(key, new AsyncLock());
+    }
+    return this.sessionLocks.get(key)!;
+  },
+
   /**
    * 检查指定用户的密钥是否已存在于IndexedDB中
    * @param userId 用户的唯一ID
@@ -255,8 +304,7 @@ export const e2eeService = {
     } catch (error) {
       console.error(`[E2EE] 用户 ${userId} 密钥初始化失败:`, error);
       throw new Error(
-        `Failed to initialize keys for ${userId}: ${
-          error instanceof Error ? error.message : String(error)
+        `Failed to initialize keys for ${userId}: ${error instanceof Error ? error.message : String(error)
         }`
       );
     }
@@ -269,59 +317,64 @@ export const e2eeService = {
    * @param recipientId 接收者的用户ID
    */
   async ensureSession(myId: string, recipientId: string): Promise<void> {
-    console.log(`[E2EE] ${myId} 确保与 ${recipientId} 的会话...`);
 
-    const store = new IndexedDbSignalProtocolStore(myId);
-    const address = new SignalProtocolAddress(recipientId, 1);
+    // ✅ 加上锁，防止多个请求同时创建会话
+    const lock = this.getLock(myId, recipientId);
 
-    try {
-      // 检查会话是否已存在
-      const session = await store.loadSession(address.toString());
-      if (session) {
-        console.log(`[E2EE] ${myId} 与 ${recipientId} 的会话已存在`);
-        return;
+    return lock.acquire(async () => {
+      console.log(`[E2EE] ${myId} 确保与 ${recipientId} 的会话...`);
+
+      const store = new IndexedDbSignalProtocolStore(myId);
+      const address = new SignalProtocolAddress(recipientId, 1);
+
+      try {
+        // 检查会话是否已存在
+        const session = await store.loadSession(address.toString());
+        if (session) {
+          console.log(`[E2EE] ${myId} 与 ${recipientId} 的会话已存在`);
+          return;
+        }
+
+        console.log(`[E2EE] ${myId} 与 ${recipientId} 的会话不存在，正在建立...`);
+
+        // 1. 从服务器获取接收者的公钥束
+        const recipientBundle = await getKeyBundleForUser(recipientId);
+        console.log(`[E2EE] 获取到 ${recipientId} 的公钥束`);
+
+        // 2. 使用 SessionBuilder 建立会话
+        const sessionBuilder = new SessionBuilder(store, address);
+
+        // 3. 处理公钥束，完成X3DH密钥交换
+        // @ts-ignore - libsignal的类型有时需要忽略
+        await sessionBuilder.processPreKey({
+          registrationId: 0,
+          identityKey: fromBase64(recipientBundle.identityKey).buffer,
+          signedPreKey: {
+            keyId: recipientBundle.signedPreKey.keyId,
+            publicKey: fromBase64(recipientBundle.signedPreKey.publicKey).buffer,
+            signature: fromBase64(recipientBundle.signedPreKey.signature).buffer,
+          },
+          preKey: {
+            keyId: recipientBundle.preKey.keyId,
+            publicKey: fromBase64(recipientBundle.preKey.publicKey).buffer,
+          },
+        });
+
+        console.log(`[E2EE] ${myId} 与 ${recipientId} 的会话建立成功`);
+      } catch (error) {
+        console.error(`[E2EE] ${myId} 与 ${recipientId} 建立会话失败:`, error);
+        throw new Error(
+          `Could not establish session: ${error instanceof Error ? error.message : String(error)
+          }`
+        );
       }
-
-      console.log(`[E2EE] ${myId} 与 ${recipientId} 的会话不存在，正在建立...`);
-
-      // 1. 从服务器获取接收者的公钥束
-      const recipientBundle = await getKeyBundleForUser(recipientId);
-      console.log(`[E2EE] 获取到 ${recipientId} 的公钥束`);
-
-      // 2. 使用 SessionBuilder 建立会话
-      const sessionBuilder = new SessionBuilder(store, address);
-
-      // 3. 处理公钥束，完成X3DH密钥交换
-      // @ts-ignore - libsignal的类型有时需要忽略
-      await sessionBuilder.processPreKey({
-        registrationId: 0,
-        identityKey: fromBase64(recipientBundle.identityKey).buffer,
-        signedPreKey: {
-          keyId: recipientBundle.signedPreKey.keyId,
-          publicKey: fromBase64(recipientBundle.signedPreKey.publicKey).buffer,
-          signature: fromBase64(recipientBundle.signedPreKey.signature).buffer,
-        },
-        preKey: {
-          keyId: recipientBundle.preKey.keyId,
-          publicKey: fromBase64(recipientBundle.preKey.publicKey).buffer,
-        },
-      });
-
-      console.log(`[E2EE] ${myId} 与 ${recipientId} 的会话建立成功`);
-    } catch (error) {
-      console.error(`[E2EE] ${myId} 与 ${recipientId} 建立会话失败:`, error);
-      throw new Error(
-        `Could not establish session: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
+    });
   },
 
   // ========== 修改开始：增强加密方法 ==========
 
   /**
-   * 加密一条消息 - 增强版本
+   * 加密一条消息 - 增强版本（并发安全 + Base64 强化）
    * @param myId 我自己的用户ID
    * @param recipientId 接收者的用户ID
    * @param message 明文消息
@@ -333,34 +386,88 @@ export const e2eeService = {
     message: string,
     onSessionUpdate?: (stateInfo: SessionStateInfo) => void
   ): Promise<EncryptionResult> {
-    console.log(`[E2EE] ${myId} 正在为 ${recipientId} 加密消息`);
+    console.log(`[E2EE] ${myId} 正在为 ${recipientId} 加密消息 (Queuing)`);
 
-    try {
-      const store = new IndexedDbSignalProtocolStore(myId, onSessionUpdate);
-      const address = new SignalProtocolAddress(recipientId, 1);
-      const cipher = new SessionCipher(store, address);
+    // ✅ 加锁
+    const lock = this.getLock(myId, recipientId);
 
-      const ciphertext = await cipher.encrypt(
-        new TextEncoder().encode(message).buffer
-      );
+    return lock.acquire(async () => {
+      console.log(`[E2EE] ${myId} 正在为 ${recipientId} 加密消息 (Processing)`);
+      try {
+        const store = new IndexedDbSignalProtocolStore(myId, onSessionUpdate);
+        const address = new SignalProtocolAddress(recipientId, 1);
 
-      console.log(`[E2EE] ${myId} 消息加密成功，类型: ${ciphertext.type}`);
+        // ✅ Check if session exists, if not establish it (Auto-Heal)
+        const hasSession = await store.loadSession(address.toString());
+        if (!hasSession) {
+          console.log(`[E2EE] No session found for ${recipientId} during encrypt, establishing now...`);
+          const recipientBundle = await getKeyBundleForUser(recipientId);
+          const sessionBuilder = new SessionBuilder(store, address);
+          // @ts-ignore
+          await sessionBuilder.processPreKey({
+            registrationId: 0,
+            identityKey: fromBase64(recipientBundle.identityKey).buffer,
+            signedPreKey: {
+              keyId: recipientBundle.signedPreKey.keyId,
+              publicKey: fromBase64(recipientBundle.signedPreKey.publicKey).buffer,
+              signature: fromBase64(recipientBundle.signedPreKey.signature).buffer,
+            },
+            preKey: {
+              keyId: recipientBundle.preKey.keyId,
+              publicKey: fromBase64(recipientBundle.preKey.publicKey).buffer,
+            },
+          });
+          console.log(`[E2EE] Session established successfully for ${recipientId}`);
+        }
 
-      return {
-        success: true,
-        ciphertext: ciphertext,
-      };
-    } catch (error) {
-      console.error(`[E2EE] ${myId} 加密消息失败:`, error);
+        const cipher = new SessionCipher(store, address);
 
-      const errorAnalysis = analyzeEncryptionError(error); // 🔑 使用私有函数
+        const ciphertext = await cipher.encrypt(
+          new TextEncoder().encode(message).buffer
+        );
 
-      return {
-        success: false,
-        error: getUserFriendlyErrorMessage(errorAnalysis), // 🔑 使用私有函数
-        errorType: errorAnalysis.errorType,
-      };
-    }
+        console.log(`[E2EE] ${myId} 消息加密成功，类型: ${ciphertext.type}`);
+
+        // ✅ 强制转换 body 为 Base64 以便安全传输 (如果是 binary string)
+        if (typeof ciphertext.body === 'string') {
+          // libsignal 在 Web 环境下生成的 body 通畅是 binary string ("latins")
+          // 但为了防止 JSON.stringify 损坏它，我们将其转换为 Base64
+          // 注意：libsignal-protocol-typescript 这里的类型很乱，有时是 ArrayBuffer 有时是 string
+          // 如果是 string (binary string)，我们转为 base64
+
+          console.log(`[E2EE] encrypt: converting binary string to base64. Len: ${ciphertext.body.length}`);
+
+          // 正确的做法：先将 binary string 转回 Uint8Array，再转 Base64
+          const binStr = ciphertext.body;
+          const len = binStr.length;
+          const arr = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            arr[i] = binStr.charCodeAt(i);
+          }
+          // @ts-ignore
+          ciphertext.body = toBase64(arr);
+        } else if ((ciphertext.body as any) instanceof ArrayBuffer || (ciphertext.body as any) instanceof Uint8Array) {
+          console.log(`[E2EE] encrypt: converting buffer to base64.`);
+          // @ts-ignore
+          ciphertext.body = toBase64(ciphertext.body);
+        }
+
+        return {
+          success: true,
+          ciphertext: ciphertext,
+        };
+      } catch (error) {
+        console.error(`[E2EE] ${myId} 加密消息失败:`, error);
+
+        const errorAnalysis = analyzeEncryptionError(error); // 🔑 使用私有函数
+
+        return {
+          success: false,
+          error: getUserFriendlyErrorMessage(errorAnalysis), // 🔑 使用私有函数
+          errorType: errorAnalysis.errorType,
+        };
+      }
+    });
   },
 
   // ========== 修改结束 ==========
@@ -368,7 +475,7 @@ export const e2eeService = {
   // ========== 修改开始：增强解密方法 ==========
 
   /**
-   * 解密一条消息 - 增强版本
+   * 解密一条消息 - 增强版本（并发安全 + Base64 自动解码）
    * @param myId 我自己的用户ID
    * @param senderId 发送方的用户ID
    * @param ciphertext 加密消息体
@@ -381,50 +488,99 @@ export const e2eeService = {
     onSessionUpdate?: (stateInfo: SessionStateInfo) => void
   ): Promise<DecryptionResult> {
     console.log(
-      `[E2EE] ${myId} 正在解密来自 ${senderId} 的消息，类型: ${ciphertext.type}`
+      `[E2EE] ${myId} 正在解密来自 ${senderId} 的消息 (Queuing)`
     );
 
-    try {
-      const store = new IndexedDbSignalProtocolStore(myId, onSessionUpdate);
-      const address = new SignalProtocolAddress(senderId, 1);
-      const cipher = new SessionCipher(store, address);
+    // ✅ 加锁
+    const lock = this.getLock(myId, senderId);
 
-      let plaintextBuffer: ArrayBuffer;
-      if (ciphertext.type === 3) {
-        console.log(`[E2EE] 处理 PreKey 消息`);
-        plaintextBuffer = await cipher.decryptPreKeyWhisperMessage(
-          ciphertext.body,
-          "binary"
-        );
-      } else {
-        console.log(`[E2EE] 处理常规消息`);
-        plaintextBuffer = await cipher.decryptWhisperMessage(
-          ciphertext.body,
-          "binary"
-        );
-      }
-
-      const plaintext = new TextDecoder().decode(
-        new Uint8Array(plaintextBuffer)
+    return lock.acquire(async () => {
+      console.log(
+        `[E2EE] ${myId} 正在解密来自 ${senderId} 的消息 (Processing), 类型: ${ciphertext.type}`
       );
-      console.log(`[E2EE] ${myId} 解密成功`);
+      try {
+        const store = new IndexedDbSignalProtocolStore(myId, onSessionUpdate);
+        const address = new SignalProtocolAddress(senderId, 1);
+        const cipher = new SessionCipher(store, address);
 
-      return {
-        success: true,
-        content: plaintext,
-      };
-    } catch (error) {
-      console.error(`[E2EE] ${myId} 解密消息失败:`, error);
+        let bodyBuffer: ArrayBuffer;
 
-      const errorAnalysis = analyzeDecryptionError(error); // 🔑 使用私有函数
+        console.log(`[E2EE] ciphertext body type: ${typeof ciphertext.body}`);
 
-      return {
-        success: false,
-        error: getUserFriendlyErrorMessage(errorAnalysis), // 🔑 使用私有函数
-        errorType: errorAnalysis.errorType,
-        needsRecovery: errorAnalysis.needsRecovery,
-      };
-    }
+        // ✅ 核心修复：处理 Base64 编码的 body
+        if (!ciphertext.body) {
+          throw new Error("Ciphertext body is missing or empty");
+        }
+
+        if (typeof ciphertext.body === 'string') {
+          // 假设它是 Base64，尝试解码
+          try {
+            // 判断是否是 Base64 (简单判断：是否只包含 Base64 字符？或者直接 try catch)
+            // 但为了兼容可能的纯 binary string (旧数据)，我们先假设它是 Base64
+            // 如果 body 是我们上面 encryptMessage 生成的，它绝对是 Base64
+            bodyBuffer = fromBase64(ciphertext.body).buffer as ArrayBuffer;
+            console.log(`[E2EE] decrypt: Base64 decoded. Len: ${bodyBuffer.byteLength}`);
+          } catch (e) {
+            console.warn('[E2EE] Base64 decoding failed, trying raw string', e);
+            // Fallback for raw string
+            const str = ciphertext.body;
+            const buf = new Uint8Array(str.length);
+            for (let i = 0; i < str.length; i++) buf[i] = str.charCodeAt(i);
+            bodyBuffer = buf.buffer;
+            console.log(`[E2EE] decrypt: Raw string converted. Len: ${bodyBuffer.byteLength}`);
+          }
+        } else if (ciphertext.body instanceof Uint8Array) {
+          console.log(`[E2EE] decrypt: Body is Uint8Array. Len: ${ciphertext.body.length}`);
+          bodyBuffer = ciphertext.body.buffer;
+        } else {
+          console.log(`[E2EE] decrypt: Body is Object/Array. Trying Object.values...`);
+          // 如果是 Array-like object (JSON deserialized Uint8Array)
+          if (ciphertext.body && typeof ciphertext.body === 'object') {
+            const vals = Object.values(ciphertext.body);
+            bodyBuffer = new Uint8Array(vals as number[]).buffer;
+          } else {
+            throw new Error(`Unknown body type: ${typeof ciphertext.body}`);
+          }
+        }
+
+        let plaintextBuffer: ArrayBuffer;
+        if (ciphertext.type === 3) {
+          console.log(`[E2EE] 处理 PreKey 消息`);
+          plaintextBuffer = await cipher.decryptPreKeyWhisperMessage(
+            bodyBuffer!,
+            "binary"
+          );
+        } else {
+          console.log(`[E2EE] 处理常规消息`);
+          plaintextBuffer = await cipher.decryptWhisperMessage(
+            bodyBuffer!,
+            "binary"
+          );
+        }
+
+        const plaintext = new TextDecoder().decode(
+          new Uint8Array(plaintextBuffer)
+        );
+        console.log(`[E2EE] ${myId} 解密成功`);
+
+        return {
+          success: true,
+          content: plaintext,
+        };
+      } catch (error) {
+        console.error(`[E2EE] ${myId} 解密消息失败:`, error);
+
+        const errorAnalysis = analyzeDecryptionError(error); // 🔑 使用私有函数
+
+        return {
+          success: false,
+          error: getUserFriendlyErrorMessage(errorAnalysis), // 🔑 使用私有函数
+          errorType: errorAnalysis.errorType,
+          needsRecovery: errorAnalysis.needsRecovery,
+        };
+      }
+    });
+
   },
 
   // ========== 修改结束 ==========
@@ -457,9 +613,8 @@ export const e2eeService = {
 
       return {
         success: false,
-        error: `会话恢复失败: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        error: `会话恢复失败: ${error instanceof Error ? error.message : String(error)
+          }`,
       };
     }
   },
@@ -511,8 +666,7 @@ export const e2eeService = {
     } catch (error) {
       console.error(`[E2EE] ${userId} 签名失败:`, error);
       throw new Error(
-        `Signing failed: ${
-          error instanceof Error ? error.message : String(error)
+        `Signing failed: ${error instanceof Error ? error.message : String(error)
         }`
       );
     }
@@ -594,8 +748,7 @@ export const e2eeService = {
       }
 
       throw new Error(
-        `获取用户密钥失败: ${
-          error instanceof Error ? error.message : String(error)
+        `获取用户密钥失败: ${error instanceof Error ? error.message : String(error)
         }`
       );
     }

@@ -59,6 +59,17 @@ export class MessageSyncService {
 
             console.log(`[MessageSync] Retrieved ${serverMessages.length} offline messages`);
 
+            // 1.5 ✅ 排序：优先处理密钥相关消息 (key_distribution, key_request)
+            serverMessages.sort((a, b) => {
+                const priorityTypes = ['key_distribution', 'key_request'];
+                const isKeyA = priorityTypes.includes(a.messageType);
+                const isKeyB = priorityTypes.includes(b.messageType);
+
+                if (isKeyA && !isKeyB) return -1; // A comes first
+                if (!isKeyA && isKeyB) return 1;  // B comes first
+                return a.timestamp - b.timestamp; // Otherwise chronological
+            });
+
             // 2. 解密消息
             const decryptedMessages: P2PMessage[] = [];
 

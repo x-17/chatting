@@ -34,8 +34,7 @@ export class UsersApiService {
       }
 
       throw new Error(
-        `上传密钥失败: ${
-          error instanceof Error ? error.message : String(error)
+        `上传密钥失败: ${error instanceof Error ? error.message : String(error)
         }`
       );
     }
@@ -47,7 +46,7 @@ export class UsersApiService {
   async getKeyBundleForUser(tenantId: string) {
     try {
       // 1. 转换tenantId为number类型（匹配后端接口要求），并发起POST请求
-      const response = await this.apiClient.post("/user/getUserKeys", {
+      const response = await this.apiClient.post("/user/p2pGetUserKeys", {
         tenantId: Number(tenantId), // 转换为number传给后端
       });
 
@@ -89,8 +88,7 @@ export class UsersApiService {
       }
 
       throw new Error(
-        `获取用户密钥失败: ${
-          error instanceof Error ? error.message : String(error)
+        `获取用户密钥失败: ${error instanceof Error ? error.message : String(error)
         }`
       );
     }
@@ -121,8 +119,7 @@ export class UsersApiService {
       }>("/api/users/batch-key-bundles", { userIds });
 
       console.log(
-        `[UsersApi] Retrieved key bundles for ${
-          Object.keys(response.data.bundles).length
+        `[UsersApi] Retrieved key bundles for ${Object.keys(response.data.bundles).length
         } users, failed: ${response.data.failed.length}`
       );
       return response.data;
@@ -164,8 +161,7 @@ export class UsersApiService {
       }
 
       throw new Error(
-        `更新密钥失败: ${
-          error instanceof Error ? error.message : String(error)
+        `更新密钥失败: ${error instanceof Error ? error.message : String(error)
         }`
       );
     }
@@ -203,8 +199,7 @@ export class UsersApiService {
       }
 
       throw new Error(
-        `获取订单信息失败: ${
-          error instanceof Error ? error.message : String(error)
+        `获取订单信息失败: ${error instanceof Error ? error.message : String(error)
         }`
       );
     }

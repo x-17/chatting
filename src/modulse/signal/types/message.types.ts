@@ -112,7 +112,7 @@ export interface KeyDistributionContent {
  */
 export function isProtocolMessage(messageType: MessageType): boolean {
   return (
-    messageType === "ping" || messageType === "pong" || messageType === "ack" || messageType === "key_distribution"
+    messageType === "ping" || messageType === "pong" || messageType === "ack"
   );
 }
 

@@ -200,20 +200,112 @@ export const groupApiService = {
         limit: number = 20
     ): Promise<PersistedGroupMessage[]> {
         try {
-            const response = await this.client.get(`/group/${orderId}/messages`, {
+            console.log(`[GroupApi] Fetching history for ${orderId}, before: ${beforeTimestamp}, limit: ${limit}`);
+            // 尝试使用符合 api.md 规范的 endpoint
+            const response = await this.client.get(`/api/groups/${orderId}/messages`, {
                 params: {
                     before: beforeTimestamp,
                     limit: limit
                 }
             });
 
+            console.log(`[GroupApi] Server response for ${orderId}: code=${response.data.code}`);
+
+            if (response.data.code !== 1) {
+                console.warn(`[GroupApi] Fetch failed: ${response.data.msg}`);
+                return [];
+            }
+
+            const data = response.data.data;
+            // Handle { success: true, messages: [...] } wrapper
+            if (data && Array.isArray(data.messages)) {
+                return data.messages;
+            }
+            // Handle direct array []
+            if (Array.isArray(data)) {
+                return data;
+            }
+
+            return [];
+        } catch (error: any) {
+            // Include fallback to legacy endpoint if 404
+            if (error.response?.status === 404) {
+                console.warn('[GroupApi] /api/groups Endpoint not found, trying legacy /group');
+                try {
+                    const legacyRes = await this.client.get(`/group/${orderId}/messages`, {
+                        params: { before: beforeTimestamp, limit }
+                    });
+                    if (legacyRes.data.code === 1) return legacyRes.data.data || [];
+                } catch (e) {
+                    console.error('[GroupApi] Legacy fetch also failed:', e);
+                }
+            }
+            console.error('[GroupApi] Get history failed:', error);
+            return [];
+        }
+    },
+
+    /**
+     * 获取最新群组消息 (用于替代离线消息接口)
+     */
+    async getLatestGroupMessages(orderId: string, limit: number = 50): Promise<PersistedGroupMessage[]> {
+        return this.getHistory(orderId, Date.now(), limit);
+    },
+
+    /**
+     * 获取离线消息 (After timestamp)
+     */
+    async getGroupOfflineMessages(
+        orderId: string,
+        transformTimestamp: number
+    ): Promise<PersistedGroupMessage[]> {
+        try {
+            // ✅ 使用符合 api.md 文档的接口
+            // GET /api/groups/:groupId/messages/offline?since=...
+            const response = await this.client.get<{
+                code: number;
+                msg: string;
+                data: {
+                    success: boolean;
+                    messages: PersistedGroupMessage[];
+                }
+            }>(`/api/groups/${orderId}/messages/offline`, {
+                params: {
+                    since: transformTimestamp
+                }
+            });
+
             if (response.data.code !== 1) {
                 return [];
             }
-            return response.data.data;
-        } catch (error) {
-            console.error('[GroupApi] Get history failed:', error);
+
+            // ✅ 正确解析返回结构
+            const data = response.data.data;
+            if (data && Array.isArray(data.messages)) {
+                return data.messages;
+            }
+
+            // 兼容旧结构（如果后端返回的是直接数组）
+            if (Array.isArray(data)) {
+                return data;
+            }
+
             return [];
+        } catch (error) {
+            console.error('[GroupApi] Get offline messages failed:', error);
+            // Fallback: try the old endpoint if 404 (optional, but good for safety)
+            // But since the old one wasn't working for unread counts (likely), we might as well just fail.
+            return [];
+        }
+    },
+
+    /**
+     * 发送群组消息
+     */
+    async sendGroupMessage(message: PersistedGroupMessage): Promise<void> {
+        const response = await this.client.post('/group/message/send', message);
+        if (response.data.code !== 1) {
+            throw new Error(response.data.msg);
         }
     },
 

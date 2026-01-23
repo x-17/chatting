@@ -74,7 +74,7 @@ const router = createRouter({
   routes: [
     {
       path: "/",
-      redirect: "/login",
+      redirect: "/login-psw",
     },
     // 合并所有模块的路由
     ...authRoutes,
@@ -96,6 +96,12 @@ const router = createRouter({
  */
 router.beforeEach(async (to, from, next) => {
   console.log(`[Router] Navigating to: ${to.name as string}`);
+
+  const authStore = useAuthStore();
+  if (!authStore.isAuthenticated) {
+    authStore.initializeAuth();
+  }
+
   next(); // 直接放行所有路由
   return;
   // const authStore = useAuthStore();

@@ -66,11 +66,11 @@ const props = defineProps<Props>();
 const authStore = useAuthStore();
 
 const currentUserInitial = computed(
-  () => authStore.user?.userName.charAt(0).toUpperCase() || "U"
+  () => authStore.user?.userName?.charAt(0).toUpperCase() || "U"
 );
 
 const senderInitial = computed(() =>
-  props.message.senderId.charAt(0).toUpperCase()
+  String(props.message.senderId).charAt(0).toUpperCase()
 );
 
 function formatTime(timestamp: number): string {

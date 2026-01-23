@@ -24,9 +24,23 @@ export function useOrderList() {
 
     return orderStore.orderList.map((order) => {
       const isBuyer = is_Buyer(myUserId, order);
-      const otherParty = isBuyer
-        ? order.participants.find((p) => p.roleType === 1)
-        : order.participants.find((p) => p.roleType === 0);
+      // 兼容字符串类型的 orderType
+      const isGroup = Number(order.orderType) === 1;
+      console.log(`[OrderList] Order ${order.orderId} type:`, order.orderType, 'isGroup:', isGroup);
+
+      let otherParty;
+      if (isGroup) {
+        // For groups, "otherParty" is essentially the group itself for display purposes
+        otherParty = {
+          userId: order.orderId,
+          dataName: order.dataName || "未命名群组",
+          roleType: -1 // Special role for group
+        };
+      } else {
+        otherParty = isBuyer
+          ? order.participants.find((p) => p.roleType === 1)
+          : order.participants.find((p) => p.roleType === 0);
+      }
 
       return {
         id: order.orderId,
@@ -39,7 +53,7 @@ export function useOrderList() {
           name: otherParty?.dataName || "未知用户",
         },
         conversationId: order.orderId,
-        conversationType: (order.orderType === 0 ? "p2p" : "group") as
+        conversationType: (isGroup ? "group" : "p2p") as
           | "p2p"
           | "group",
         unreadCount: order.metadata?.unreadCount || 0,

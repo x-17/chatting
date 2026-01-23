@@ -10,7 +10,12 @@ export interface IMessageSender {
     /**
      * ✅ 发送密钥分发消息（P2P 加密通道）
      */
-    sendKeyToUser(userId: string, orderId: string, distMsg: ISenderKeyDistributionMessage): Promise<void>;
+    sendKeyToUser(userId: string, distMsg: ISenderKeyDistributionMessage, orderId: string): Promise<void>;
+
+    /**
+     * ✅ 发送密钥请求（P2P 加密通道）
+     */
+    sendKeyRequest(userId: string, orderId: string): Promise<void>;
 
     /**
      * 发送群组广播（系统信令，通过 WebSocket）
@@ -19,8 +24,11 @@ export interface IMessageSender {
 }
 
 const mockMessageSender: IMessageSender = {
-    async sendKeyToUser(uid, oid, msg) {
+    async sendKeyToUser(uid, msg, oid) {
         console.log('[Mock] Send key to user:', uid, 'for order:', oid);
+    },
+    async sendKeyRequest(uid, oid) {
+        console.log('[Mock] Send key request to user:', uid, 'for order:', oid);
     },
     async sendToGroup(gid, msg) {
         console.log('[Mock] Send to group:', gid, msg);
@@ -29,6 +37,13 @@ const mockMessageSender: IMessageSender = {
 
 export const groupManagementService = {
     messageSender: mockMessageSender,
+
+    // ✅ Listeners for key updates
+    _onKeyUpdatedCallbacks: [] as ((orderId: string) => void)[],
+
+    onKeyUpdated(callback: (orderId: string) => void) {
+        this._onKeyUpdatedCallbacks.push(callback);
+    },
 
     setMessageSender(sender: IMessageSender) {
         this.messageSender = sender;
@@ -129,7 +144,7 @@ export const groupManagementService = {
         const promises = memberIds
             .filter(id => id !== myUserId) // 排除自己
             .map(memberId =>
-                this.messageSender.sendKeyToUser(memberId, orderId, distMsg)
+                this.messageSender.sendKeyToUser(memberId, distMsg, orderId)
                     .catch(error => {
                         console.error(`[GroupMgmt] Failed to send key to ${memberId}:`, error);
                         // 不抛出错误，继续发送给其他成员
@@ -140,6 +155,9 @@ export const groupManagementService = {
         console.log(`[GroupMgmt] Key broadcast completed for ${orderId}`);
     },
 
+    /**
+     * ✅ 处理服务器广播：成员加入 (userIn)
+     */
     /**
      * ✅ 处理服务器广播：成员加入 (userIn)
      */
@@ -173,9 +191,10 @@ export const groupManagementService = {
             // 3. 如果是我自己加入
             if (newMemberId === myUserId) {
                 // 创建我的密钥并广播给所有成员
+                console.log(`[GroupMgmt] I joined ${orderId}, creating and broadcasting my key...`);
                 const myDistMsg = await groupE2eeService.createGroupSession(myUserId, orderId);
                 await this.broadcastMyKeyToMembers(myUserId, orderId, memberIds, myDistMsg);
-                console.log(`[GroupMgmt] I joined ${orderId}, broadcasted my key`);
+                console.log(`[GroupMgmt] Broadcasted my key to all members.`);
                 return;
             }
 
@@ -187,13 +206,23 @@ export const groupManagementService = {
             }
 
             // 5. ✅ 发送我的密钥给新成员（P2P）
-            const myDistMsg = await groupE2eeService.getMyCurrentDistribution(myUserId, orderId);
-            if (myDistMsg) {
-                await this.messageSender.sendKeyToUser(newMemberId, orderId, myDistMsg);
-                console.log(`[GroupMgmt] Sent my key to new member ${newMemberId}`);
+            // 注意：不要轮转密钥！只把当前的密钥发给他即可。
+            console.log(`[GroupMgmt] A new member ${newMemberId} joined. Sending my key to them...`);
+
+            let myDistMsg = await groupE2eeService.getMyCurrentDistribution(myUserId, orderId);
+
+            // 容错：如果我还没有密钥会话（可能是第一次被加进来还没发过言），则初始化一个
+            if (!myDistMsg) {
+                console.log(`[GroupMgmt] I don't have a session for ${orderId} yet. Creating one now.`);
+                myDistMsg = await groupE2eeService.createGroupSession(myUserId, orderId);
+                // 既然创建了新密钥，顺便广播给所有人（为了保险）
+                await this.broadcastMyKeyToMembers(myUserId, orderId, memberIds, myDistMsg);
             } else {
-                console.warn(`[GroupMgmt] My key not found for ${orderId}, need to initialize`);
+                // 只有已有的密钥，只发给新成员
+                await this.messageSender.sendKeyToUser(newMemberId, myDistMsg, orderId);
             }
+
+            console.log(`[GroupMgmt] Sent my key to new member ${newMemberId}`);
 
         } catch (error) {
             console.error(`[GroupMgmt] Failed to handle userIn:`, error);
@@ -268,23 +297,103 @@ export const groupManagementService = {
      * ✅ 处理收到的密钥分发（通过 P2P Router 回调）
      */
     async handleKeyDistributionSignal(myUserId: string, payload: ISenderKeyDistributionMessage): Promise<void> {
+        console.log(`[GroupMgmt] START handleKeyDistributionSignal for order ${payload.orderId} from ${payload.senderId}`);
         try {
+            console.log('[GroupMgmt] Payload before conversion:', {
+                hasSigningKey: !!payload.signingPublicKey,
+                signingKeyType: payload.signingPublicKey ? typeof payload.signingPublicKey : 'undefined',
+                isUint8Array: payload.signingPublicKey instanceof Uint8Array,
+                chainKeyType: payload.chainKey ? typeof payload.chainKey : 'undefined'
+            });
+
+            // ✅ 修复：确保 payload 中的二进制字段是 Uint8Array
+            if (payload.signingPublicKey && !(payload.signingPublicKey instanceof Uint8Array)) {
+                console.log('[GroupMgmt] Converting signingPublicKey to Uint8Array...');
+                payload.signingPublicKey = new Uint8Array(Object.values(payload.signingPublicKey));
+            }
+            if (payload.chainKey && !(payload.chainKey instanceof Uint8Array)) {
+                console.log('[GroupMgmt] Converting chainKey to Uint8Array...');
+                payload.chainKey = new Uint8Array(Object.values(payload.chainKey));
+            }
+
+            console.log('[GroupMgmt] Calling groupE2eeService.processGroupKeyDistribution...');
             await groupE2eeService.processGroupKeyDistribution(myUserId, payload);
-            console.log(`[GroupMgmt] Processed key from ${payload.senderId} for ${payload.orderId}`);
+            console.log(`[GroupMgmt] Processed key from ${payload.senderId} for ${payload.orderId} - SUCCESS`);
+
+            // ✅ Notify listeners (e.g. GroupRouter) to retry decryption
+            if (this['_onKeyUpdatedCallbacks']) {
+                this['_onKeyUpdatedCallbacks'].forEach((cb: any) => cb(payload.orderId));
+            }
         } catch (error) {
             console.error(`[GroupMgmt] Failed to process key distribution:`, error);
         }
     },
 
     /**
+     * ✅ 处理收到的密钥请求 (Reply)
+     */
+    async handleKeyRequestSignal(myUserId: string, payload: { orderId: string; senderId: string }): Promise<void> {
+        const { orderId, senderId } = payload;
+        console.log(`[GroupMgmt] Received KEY_REQUEST from ${senderId} for order ${orderId}`);
+
+        try {
+            // 1. Check if requester is a member
+            const isMember = await groupStore.isMember(orderId, senderId);
+            if (!isMember) {
+                console.warn(`[GroupMgmt] Key request from non-member ${senderId}, ignoring`);
+                return;
+            }
+
+            // 2. Get my current key
+            const myDistMsg = await groupE2eeService.getMyCurrentDistribution(myUserId, orderId);
+            if (!myDistMsg) {
+                console.warn(`[GroupMgmt] I don't have a session for ${orderId}, cannot reply to request`);
+                return;
+            }
+
+            // 3. Send key to requester
+            await this.messageSender.sendKeyToUser(senderId, myDistMsg, orderId);
+            console.log(`[GroupMgmt] Replied to key request from ${senderId}`);
+
+        } catch (error) {
+            console.error(`[GroupMgmt] Failed to handle key request:`, error);
+        }
+    },
+
+    /**
+     * ✅ 主动请求密钥 (Ask)
+     */
+    async askForKey(myUserId: string, orderId: string, targetUserId: string): Promise<void> {
+        console.log(`[GroupMgmt] Asking ${targetUserId} for key in ${orderId}`);
+        await this.messageSender.sendKeyRequest(targetUserId, orderId);
+    },
+
+    /**
      * ✅ WebSocket 重连后重新同步
      */
     async onReconnected(myUserId: string): Promise<void> {
-        console.log('[GroupMgmt] WebSocket reconnected, re-syncing all groups...');
+        console.log(`[GroupMgmt] User ${myUserId} syncing groups on login...`);
+
         try {
-            await this.syncAllGroupsOnLogin(myUserId);
+            const serverOrders = await groupApiService.getMyGroupOrders();
+
+            if (serverOrders.length === 0) {
+                console.log('[GroupMgmt] No group orders found');
+                return;
+            }
+
+            console.log(`[GroupMgmt] Found ${serverOrders.length} orders from server`);
+
+            for (const order of serverOrders) {
+                await this.syncSingleGroup(myUserId, order);
+            }
+
+            console.log('[GroupMgmt] All groups synced successfully');
+
         } catch (error) {
-            console.error('[GroupMgmt] Failed to re-sync on reconnection:', error);
+            console.error('[GroupMgmt] Failed to sync groups:', error);
+            throw error;
         }
     }
 };
+

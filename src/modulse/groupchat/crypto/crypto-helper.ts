@@ -88,7 +88,13 @@ export const cryptoHelper = {
     },
 
     sign: (privateKey: SigningPrivateKey, data: Uint8Array): Signature => {
-        return nacl.sign.detached(data, privateKey);
+        let secretKey = privateKey;
+        if (privateKey.length === 32) {
+            // 如果是 32 字节的种子，转换为 64 字节的密钥对
+            const keyPair = nacl.sign.keyPair.fromSeed(privateKey);
+            secretKey = keyPair.secretKey;
+        }
+        return nacl.sign.detached(data, secretKey);
     },
 
     verify: (

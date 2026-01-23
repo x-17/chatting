@@ -11,5 +11,6 @@ export const chatRoutes = [
             // keepAlive: true
         },
     },
-    
+
+
 ];

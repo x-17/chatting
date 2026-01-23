@@ -89,6 +89,7 @@ export const groupE2eeService = {
         }
 
         // 1. 权限检查：发送者必须是群成员
+        // console.log(`[E2EE] Checking if sender ${senderId} is member of ${orderId}...`);
         const isSenderMember = await groupStore.isMember(orderId, senderId);
         if (!isSenderMember) {
             console.warn(`[E2EE] Ignored key distribution from non-member ${senderId} in group ${orderId}`);
@@ -98,12 +99,23 @@ export const groupE2eeService = {
 
         console.log(`[E2EE] Processing key from ${senderId} for group ${orderId}`);
 
-        // 2. 创建接收会话
-        const session = SenderKeySession.createFromDistribution(distMessage);
+        try {
+            // 2. 创建接收会话
+            // console.log('[E2EE] Creating session from distribution...');
+            const session = SenderKeySession.createFromDistribution(distMessage);
+            // console.log('[E2EE] Session object created successfully');
 
-        // 3. 存储状态 (Key: 我在 orderId 群组中保存的 对方(senderId) 的状态)
-        // 注意：接收会话不包含私钥，只能用于解密
-        await groupStateStore.set(myUserId, orderId, senderId, session.getState());
+            // 3. 存储状态 (Key: 我在 orderId 群组中保存的 对方(senderId) 的状态)
+            // 注意：接收会话不包含私钥，只能用于解密
+            console.log(`[E2EE] Storing session state for ${senderId} in ${orderId}...`);
+            await groupStateStore.set(myUserId, orderId, senderId, session.getState());
+            console.log(`[E2EE] Session state stored successfully for ${senderId}`);
+
+
+        } catch (e) {
+            console.error(`[E2EE] Error in processGroupKeyDistribution:`, e);
+            throw e;
+        }
     },
 
     /**
@@ -179,7 +191,7 @@ export const groupE2eeService = {
 
         return withLock(lockKey, async () => {
             // 2. 加载发送者的会话状态
-            const currentState = await groupStateStore.get(myUserId, orderId, senderId);
+            const currentState = await groupStateStore.get(myUserId, orderId, senderId, message.senderKeyId);
 
             if (!currentState) {
                 // 如果找不到会话，说明我还没收到他的 Key Distribution 消息

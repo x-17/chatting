@@ -72,6 +72,9 @@
         <el-text v-if="disabled" type="info" size="small">
           此订单已完成，无法发送消息
         </el-text>
+        <el-text v-else-if="!isConnected" type="warning" size="small">
+          <el-icon class="is-loading"><Loading /></el-icon> 连接中...
+        </el-text>
       </div>
       <div class="footer-right">
         <el-button @click="handleClear">清空</el-button>
@@ -97,12 +100,14 @@ import {
   Picture,
   Lightning,
   Document,
+  Loading,
 } from "@element-plus/icons-vue";
 import type { Order } from "../types/chat.types";
 
 interface Props {
   order: Order;
   disabled?: boolean;
+  isConnected?: boolean; // ✅ Connection status
 }
 
 interface Emits {
@@ -119,7 +124,7 @@ const messageText = ref("");
 const sending = ref(false);
 
 const canSend = computed(
-  () => messageText.value.trim().length > 0 && !props.disabled
+  () => messageText.value.trim().length > 0 && !props.disabled && props.isConnected
 );
 
 function handleKeydown(e: KeyboardEvent) {
