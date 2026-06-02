@@ -59,6 +59,8 @@ export function useOrderList() {
         unreadCount: order.metadata?.unreadCount || 0,
         lastMessageTime: order.metadata?.lastMessageTime,
         lastMessageContent: order.metadata?.lastMessageContent,
+        parentOrderId: order.parentOrderId,
+        objectionReason: order.objectionReason,
         metadata: order.metadata || { unreadCount: 0 },
       };
     });

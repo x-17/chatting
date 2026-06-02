@@ -90,8 +90,11 @@ watch(
 
       // 从sessionStorage或Pinia中获取之前保存的上下文，如跳转目标和可能的 orderId
       const orderId = sessionStorage.getItem("redirect_context_orderId");
+      const parentOrderIdStr = sessionStorage.getItem("redirect_context_parentOrderId");
 
       const bssOrderId = orderId ? Number(orderId) : 0;
+      const bssParentOrderId = parentOrderIdStr ? Number(parentOrderIdStr) : undefined;
+      
       if (!bssOrderId) {
         ElMessage.error("订单注册失败:无效的订单ID");
         // router.replace("/login-failed"); //跳转到统一错误页面
@@ -104,10 +107,11 @@ watch(
           text: "正在创建订单，请稍候...",
         });
         try {
-          const msg = await orderApi.createOrder(bssOrderId);
+          const msg = await orderApi.createOrder(bssOrderId, bssParentOrderId);
           ElMessage.success(msg || "订单创建成功");
           sessionStorage.removeItem("redirect_context_orderId");
-          router.replace("/chat");
+          sessionStorage.removeItem("redirect_context_parentOrderId");
+          router.replace({ path: "/chat", query: { bssOrderId: bssOrderId.toString() } });
         } catch (err: any) {
           ElMessage.error("订单创建失败：" + (err?.message || "未知错误"));
           router.replace("/login-failed"); //跳转到统一错误页面

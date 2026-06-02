@@ -39,6 +39,23 @@
         </div>
       </div>
 
+      <!-- 争议信息 -->
+      <div v-if="order.parentOrderId || fullOrder?.parentOrderId" class="detail-section">
+        <div class="section-title" style="color: #F56C6C;">
+          <el-icon><Warning /></el-icon> 争议信息
+        </div>
+        <div class="info-list">
+          <div class="info-item">
+            <span class="label">原订单编号</span>
+            <span class="value">{{ order.parentOrderId || fullOrder?.parentOrderId }}</span>
+          </div>
+          <div class="info-item" v-if="order.objectionReason || fullOrder?.objectionReason">
+            <span class="label">争议原因</span>
+            <span class="value" style="color: #F56C6C;">{{ order.objectionReason || fullOrder?.objectionReason }}</span>
+          </div>
+        </div>
+      </div>
+
       <!-- 对方信息 -->
       <div class="detail-section">
         <div class="section-title">
@@ -115,11 +132,41 @@
           block style="margin-left: 0;">
           确认完成订单
         </el-button>
+        <el-button v-if="hasDispute" type="warning" :icon="Connection" @click="showDisputeGraph" block style="margin-left: 0;">
+          查看争议图谱
+        </el-button>
         <el-button :icon="MoreFilled" @click="showMoreActions" block style="margin-left: 0;">
           更多操作
         </el-button>
       </div>
     </el-scrollbar>
+
+    <!-- 争议图谱对话框 -->
+    <el-dialog v-model="disputeDialogVisible" title="争议图谱" width="500px" append-to-body>
+      <div v-loading="disputeGraphLoading" class="dispute-graph-container">
+        <el-timeline v-if="disputeNodes.length > 0">
+          <el-timeline-item
+            v-for="(node, index) in reversedDisputeNodes"
+            :key="node.orderId"
+            :type="index === reversedDisputeNodes.length - 1 ? 'primary' : 'info'"
+            :timestamp="'订单号: ' + node.orderId"
+            placement="top"
+          >
+            <el-card shadow="hover" class="dispute-card">
+              <div class="dispute-field">
+                <span class="label">数据名称：</span>
+                <span class="value">{{ node.dataName || '未知' }}</span>
+              </div>
+              <div class="dispute-field" v-if="node.objectionReason">
+                <span class="label">争议原因：</span>
+                <span class="value reason">{{ node.objectionReason }}</span>
+              </div>
+            </el-card>
+          </el-timeline-item>
+        </el-timeline>
+        <el-empty v-else description="暂无关联争议图谱数据" />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -133,9 +180,12 @@ import {
   DocumentAdd,
   CircleCheck,
   MoreFilled,
+  Connection,
+  Warning,
 } from "@element-plus/icons-vue";
 import { useAuthStore } from "../../auth/services/auth.store";
 import { getOrderService } from "../../orders/services/order.service";
+import { useOrderStore } from "../../orders/store/order.store";
 import { getContractService } from "../../contracts/services/contract.service";
 import type { Order as ChatOrder } from "../types/chat.types";
 import type { Order as FullOrder } from "../../orders/types/order.types";
@@ -155,9 +205,63 @@ const emit = defineEmits<Emits>();
 
 const router = useRouter();
 const authStore = useAuthStore();
+const orderStore = useOrderStore();
 
 const orderInfo = ref<FullOrder | null>(null);
 const contracts = ref<Contract[]>([]);
+
+const fullOrder = computed(() => orderStore.getOrderById(props.order.id));
+const hasDispute = computed(() => {
+  return !!fullOrder.value?.parentOrderId || !!fullOrder.value?.objectionReason;
+});
+
+const disputeDialogVisible = ref(false);
+const disputeGraphLoading = ref(false);
+const disputeNodes = ref<FullOrder[]>([]);
+
+const reversedDisputeNodes = computed(() => {
+  return [...disputeNodes.value].reverse();
+});
+
+async function showDisputeGraph() {
+  disputeDialogVisible.value = true;
+  disputeGraphLoading.value = true;
+  disputeNodes.value = [];
+  
+  try {
+    let currentId = props.order.id;
+    let safeGuard = 0;
+    while (currentId && safeGuard < 20) {
+      safeGuard++;
+      let order = orderStore.getOrderById(currentId);
+      if (!order) {
+        try {
+          order = await orderStore.fetchOrder(currentId);
+        } catch (e) {
+          console.warn("Could not fetch order details for", currentId);
+          disputeNodes.value.push({
+            orderId: currentId,
+            dataName: '未获取到详情',
+            objectionReason: '未知',
+          } as FullOrder);
+          break;
+        }
+      }
+      
+      if (order) {
+        disputeNodes.value.push(order);
+        currentId = order.parentOrderId;
+      } else {
+        break;
+      }
+    }
+  } catch (error) {
+    console.error("Failed to load dispute graph:", error);
+    ElMessage.error("加载争议图谱失败");
+  } finally {
+    disputeGraphLoading.value = false;
+  }
+}
 
 // const orderService = computed(() => getOrderService(authStore.user!.id));
 
@@ -451,5 +555,40 @@ function showMoreActions() {
   margin-top: 20px;
   padding-top: 20px;
   border-top: 1px solid #e4e7ed;
+}
+
+.dispute-graph-container {
+  padding: 10px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.dispute-card {
+  margin-bottom: 8px;
+}
+
+.dispute-field {
+  display: flex;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.dispute-field:last-child {
+  margin-bottom: 0;
+}
+
+.dispute-field .label {
+  color: #909399;
+  width: 70px;
+  flex-shrink: 0;
+}
+
+.dispute-field .value {
+  color: #303133;
+  flex: 1;
+}
+
+.dispute-field .value.reason {
+  color: #f56c6c;
 }
 </style>

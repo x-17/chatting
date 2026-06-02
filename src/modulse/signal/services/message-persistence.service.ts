@@ -4,7 +4,7 @@ import { openDB, type IDBPDatabase } from 'idb';
 import type { P2PMessage, OrderSessionInfo } from '../types/message.types';
 
 const DB_NAME = 'p2p-messages-db';
-const DB_VERSION = 3; // 版本升级到3，支持重传字段
+const DB_VERSION = 4; // 升级到4，支持本地多账号共用同一浏览器时的复合主键
 const STORE_NAME = 'messages';
 const ORDER_SESSIONS_STORE = 'order_sessions';
 
@@ -28,24 +28,26 @@ export class MessagePersistenceService {
         try {
             this.db = await openDB(DB_NAME, DB_VERSION, {
                 upgrade(db, oldVersion) {
-                    // 版本2到版本3的迁移：添加重传支持
-                    if (oldVersion < 3) {
+                    if (oldVersion < 4) {
                         // 删除旧的消息存储（如果存在）
                         if (db.objectStoreNames.contains(STORE_NAME)) {
                             db.deleteObjectStore(STORE_NAME);
                         }
 
-                        // 创建新的消息存储
-                        const messageStore = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                        // 创建新的消息存储，使用复合主键 ['userId', 'id'] 避免同浏览器切换账号导致互相覆盖
+                        const messageStore = db.createObjectStore(STORE_NAME, { keyPath: ['userId', 'id'] });
 
-                        // 4个核心索引
-                        messageStore.createIndex('by-order-sequence', ['orderId', 'sequence']); // 订单+序列号排序
-                        messageStore.createIndex('by-order-status', ['orderId', 'status']);     // 订单+状态查询
-                        messageStore.createIndex('by-retry-time', 'nextRetryTime');            // 重试时间调度
-                        messageStore.createIndex('by-user-order', ['userId', 'orderId', 'timestamp']); // 用户数据隔离
+                        // 核心索引
+                        messageStore.createIndex('by-order-sequence', ['orderId', 'sequence']); 
+                        messageStore.createIndex('by-order-status', ['orderId', 'status']);     
+                        messageStore.createIndex('by-retry-time', 'nextRetryTime');            
+                        messageStore.createIndex('by-user-order', ['userId', 'orderId', 'timestamp']); 
 
-                        // 创建订单会话存储
-                        const sessionStore = db.createObjectStore(ORDER_SESSIONS_STORE, { keyPath: 'orderId' });
+                        // 创建订单会话存储，同样使用复合主键
+                        if (db.objectStoreNames.contains(ORDER_SESSIONS_STORE)) {
+                            db.deleteObjectStore(ORDER_SESSIONS_STORE);
+                        }
+                        const sessionStore = db.createObjectStore(ORDER_SESSIONS_STORE, { keyPath: ['userId', 'orderId'] });
                         sessionStore.createIndex('by-user', 'userId');
                         sessionStore.createIndex('by-last-message', ['userId', 'lastMessageTime']);
                     }
@@ -53,6 +55,8 @@ export class MessagePersistenceService {
             });
 
             console.log(`[MessagePersistence] Database v${DB_VERSION} initialized for user: ${this.userId}`);
+
+            // v4 升级后复合主键天然隔离，不需要rescue了
         } catch (error) {
             console.error('[MessagePersistence] Init error:', error);
             throw error;
@@ -210,8 +214,8 @@ export class MessagePersistenceService {
         await this.ensureDb();
 
         try {
-            const session = await this.db!.get(ORDER_SESSIONS_STORE, orderId);
-            if (session && session.userId === this.userId) {
+            const session = await this.db!.get(ORDER_SESSIONS_STORE, [this.userId, orderId]);
+            if (session) {
                 const stats = await this.calculateOrderStats(orderId);
                 session.pendingMessages = stats.pending;
                 session.failedMessages = stats.failed;
@@ -373,8 +377,8 @@ export class MessagePersistenceService {
         await this.ensureDb();
 
         try {
-            const message = await this.db!.get(STORE_NAME, messageId);
-            if (message && message.userId === this.userId) {
+            const message = await this.db!.get(STORE_NAME, [this.userId, messageId]);
+            if (message) {
                 const updatedMessage: P2PMessage = {
                     ...message,
                     ...updates,
@@ -449,8 +453,8 @@ export class MessagePersistenceService {
         await this.ensureDb();
 
         try {
-            const message = await this.db!.get(STORE_NAME, messageId);
-            if (message && message.userId === this.userId) {
+            const message = await this.db!.get(STORE_NAME, [this.userId, messageId]);
+            if (message) {
                 const updates: Partial<P2PMessage> = {
                     status,
                     deliveryConfirmed: status === 'delivered' ? true : message.deliveryConfirmed,
@@ -491,7 +495,7 @@ export class MessagePersistenceService {
             }
 
             // 删除订单会话
-            await this.db!.delete(ORDER_SESSIONS_STORE, orderId);
+            await this.db!.delete(ORDER_SESSIONS_STORE, [this.userId, orderId]);
 
             console.log(`[MessagePersistence] Deleted all messages for order: ${orderId}`);
         } catch (error) {
@@ -517,7 +521,7 @@ export class MessagePersistenceService {
                     const tx = this.db!.transaction(STORE_NAME, 'readwrite');
 
                     for (const message of toDelete) {
-                        await tx.store.delete(message.id);
+                        await tx.store.delete([this.userId, message.id]);
                     }
                     await tx.done;
 

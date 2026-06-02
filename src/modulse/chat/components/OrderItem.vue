@@ -29,6 +29,9 @@
         <el-tag v-if="order.conversationType === 'group'" size="small" type="warning" effect="dark">
             群聊
         </el-tag>
+        <el-tag v-if="order.parentOrderId" size="small" type="danger" effect="dark">
+            争议
+        </el-tag>
       </div>
 
       <div class="last-message">

@@ -42,6 +42,8 @@ export interface Order {
     unreadCount?: number;
     [key: string]: any;
   };
+  parentOrderId: string;
+  objectionReason: string;
 }
 
 // 创建订单的请求参数

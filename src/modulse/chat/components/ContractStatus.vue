@@ -139,7 +139,7 @@ watch(
       contractName.value = null;
       errorMsg.value = "";
     }
-  }
+  },
 );
 watch(dialogVisible, (newVal) => {
   emit("update:visible", newVal);
@@ -150,7 +150,7 @@ watch(
   () => props.visible,
   (newVal) => {
     dialogVisible.value = newVal;
-  }
+  },
 );
 </script>
 

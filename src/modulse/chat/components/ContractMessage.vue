@@ -222,7 +222,7 @@ onMounted(async () => {
         props.message.orderId
       );
       if (res.code === 1) {
-        if (typeof res.data !== "string" && res.data.status) {
+        if (typeof res.data !== "string" ) {
           contractState.value = res.data.status;
         }
       }

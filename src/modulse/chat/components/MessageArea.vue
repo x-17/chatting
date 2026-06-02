@@ -47,13 +47,13 @@
           <FileMessage v-else-if="
             message.type === 'file' ||
             message.type === 'image'
-          " :message="message" :is-mine="message.senderId === currentUserId" @download="handleDownloadFile" />
+          " :message="message" :is-mine="String(message.senderId) === currentUserId" @download="handleDownloadFile" />
           <ContractMessage v-else-if="message.type === 'contract'" :message="message"
-            :is-mine="message.senderId === currentUserId" @trigger-contract="handleContract"
+            :is-mine="String(message.senderId) === currentUserId" @trigger-contract="handleContract"
             @preview="handlePreviewFile" @download="handleDownloadFile" />
 
           <!-- 文本消息 -->
-          <MessageBubble v-else :message="message" :is-mine="message.senderId === currentUserId"
+          <MessageBubble v-else :message="message" :is-mine="String(message.senderId) === currentUserId"
             :show-sender="isGroupChat" />
         </template>
       </div>
@@ -113,7 +113,7 @@ const contractNum = ref(0);
 // const contractInfo = ref<orderSignState>(null);
 const contractInfo = ref<orderSignState>();
 
-const currentUserId = computed(() => authStore.currentUserId || "");
+const currentUserId = computed(() => String(authStore.currentUserId || sessionStorage.getItem("auth_current_user_id") || ""));
 const otherPartyInitial = computed(() =>
   props.order.otherParty.name.charAt(0).toUpperCase()
 );

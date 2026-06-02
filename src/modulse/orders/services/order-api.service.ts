@@ -25,9 +25,12 @@ export class OrderApiService {
   /**
    * 添加订单
    */
-  async createOrder(bssOrderId: number): Promise<string> {
+  async createOrder(bssOrderId: number, parentOrderId?: number): Promise<string> {
     try {
-      const requestData = { bssOrderId: bssOrderId };
+      const requestData: any = { bssOrderId: bssOrderId };
+      if (parentOrderId !== undefined && parentOrderId !== null) {
+        requestData.parentOrderId = parentOrderId;
+      }
       const response = await this.apiClient.post<ApiResponse<string>>(
         "/order/add",
         requestData

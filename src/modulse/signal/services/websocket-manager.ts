@@ -81,7 +81,7 @@ export class WebSocketManager {
   constructor(
     private userId: string,
     private wsUrl?: string,
-    config?: Partial<WebSocketConfig>
+    config?: Partial<WebSocketConfig>,
   ) {
     this.wsUrl = wsUrl || this.buildWebSocketUrl();
 
@@ -158,17 +158,18 @@ export class WebSocketManager {
       requireAck?: boolean;
       timeout?: number;
       maxRetries?: number;
-    } = {}
+    } = {},
   ): Promise<any> {
     const requireAck = options.requireAck ?? true;
     const timeout = options.timeout ?? this.config.ack.timeout;
     const maxRetries = options.maxRetries ?? this.config.ack.retry.maxAttempts;
 
     if (!this.isConnected()) {
-      console.warn(`[WebSocket] Cannot send - not connected. Status: ${this.status}, ReadyState: ${this.ws?.readyState}, WS exists: ${!!this.ws}`);
+      console.warn(
+        `[WebSocket] Cannot send - not connected. Status: ${this.status}, ReadyState: ${this.ws?.readyState}, WS exists: ${!!this.ws}`,
+      );
       throw new Error("WebSocket not connected");
     }
-
 
     // ✅ 确保消息有 id（如果没有则生成）
     const messageToSend: WebSocketMessage = {
@@ -181,7 +182,7 @@ export class WebSocketManager {
       this.ws!.send(JSON.stringify(messageToSend));
 
       console.log(
-        `[WebSocket] Sent message: type=${message.messageType}, id=${messageToSend.id}`
+        `[WebSocket] Sent message: type=${message.messageType}, id=${messageToSend.id}`,
       );
 
       // ✅ 协议消息(ping/pong/ack)不需要等待 ACK
@@ -194,7 +195,7 @@ export class WebSocketManager {
         return await this.waitForAckWithRetry(
           messageToSend,
           timeout,
-          maxRetries
+          maxRetries,
         );
       }
 
@@ -245,15 +246,18 @@ export class WebSocketManager {
   async sendGroupMessage(
     orderId: string,
     encryptedContent: string,
-    type: 'text' | 'file' = 'text'
+    type: "text" | "file" = "text",
   ): Promise<any> {
-    return await this.send({
-      id: this.generateMessageId(),
-      messageType: type, // 复用现有的 text/file 类型
-      orderId: orderId,
-      encryptedContent: encryptedContent,
-      timestamp: Date.now()
-    }, { requireAck: true });
+    return await this.send(
+      {
+        id: this.generateMessageId(),
+        messageType: type, // 复用现有的 text/file 类型
+        orderId: orderId,
+        encryptedContent: encryptedContent,
+        timestamp: Date.now(),
+      },
+      { requireAck: true },
+    );
   }
 
   /**
@@ -263,18 +267,21 @@ export class WebSocketManager {
   async sendGroupSignal(
     orderId: string,
     signalType: string,
-    payload: any
+    payload: any,
   ): Promise<any> {
-    return await this.send({
-      id: this.generateMessageId(),
-      messageType: 'system', // 复用 system 类型
-      orderId: orderId,
-      content: JSON.stringify({
-        type: signalType,
-        payload: payload
-      }),
-      timestamp: Date.now()
-    }, { requireAck: true });
+    return await this.send(
+      {
+        id: this.generateMessageId(),
+        messageType: "system", // 复用 system 类型
+        orderId: orderId,
+        content: JSON.stringify({
+          type: signalType,
+          payload: payload,
+        }),
+        timestamp: Date.now(),
+      },
+      { requireAck: true },
+    );
   }
 
   /**
@@ -350,7 +357,7 @@ export class WebSocketManager {
       this.startClientHeartbeat();
     } else {
       console.log(
-        "[WebSocket] Running in passive mode (waiting for server pings)"
+        "[WebSocket] Running in passive mode (waiting for server pings)",
       );
     }
   }
@@ -360,7 +367,7 @@ export class WebSocketManager {
       const message: WebSocketMessage = JSON.parse(event.data);
 
       console.log(
-        `[WebSocket] Received message: type=${message.messageType}, id=${message.id}`
+        `[WebSocket] Received message: type=${message.messageType}, id=${message.id}`,
       );
 
       // ✅ 根据消息类型分发处理
@@ -378,7 +385,7 @@ export class WebSocketManager {
 
   private handleClose(event: CloseEvent): void {
     console.log(
-      `[WebSocket] Connection closed: ${event.code} - ${event.reason}`
+      `[WebSocket] Connection closed: ${event.code} - ${event.reason}`,
     );
 
     this.stopHeartbeat();
@@ -425,7 +432,7 @@ export class WebSocketManager {
       default:
         console.warn(
           "[WebSocket] Unknown protocol message:",
-          message.messageType
+          message.messageType,
         );
     }
   }
@@ -435,7 +442,7 @@ export class WebSocketManager {
    */
   private handleBusinessMessage(message: WebSocketMessage): void {
     console.log(
-      `[WebSocket] Processing business message: type=${message.messageType}, id=${message.id}`
+      `[WebSocket] Processing business message: type=${message.messageType}, id=${message.id}`,
     );
 
     // ✅ 触发消息回调（统一处理）
@@ -484,7 +491,7 @@ export class WebSocketManager {
   private async waitForAckWithRetry(
     message: WebSocketMessage,
     timeout: number,
-    maxRetries: number
+    maxRetries: number,
   ): Promise<any> {
     return new Promise((resolve, reject) => {
       const messageId = message.id;
@@ -535,7 +542,7 @@ export class WebSocketManager {
     } else {
       // 达到最大重试次数，失败
       console.error(
-        `[WebSocket] Message ${messageId} failed after ${maxRetries} retries`
+        `[WebSocket] Message ${messageId} failed after ${maxRetries} retries`,
       );
       this.clearMessageRetry(messageId);
       reject(new Error(`Message delivery failed after ${maxRetries} attempts`));
@@ -558,7 +565,7 @@ export class WebSocketManager {
       baseDelay * Math.pow(this.config.ack.retry.backoffMultiplier, retryCount);
 
     console.log(
-      `[WebSocket] Retrying message ${messageId} (attempt ${nextRetryCount}/${maxRetries}) after ${backoffDelay}ms`
+      `[WebSocket] Retrying message ${messageId} (attempt ${nextRetryCount}/${maxRetries}) after ${backoffDelay}ms`,
     );
 
     // 设置重传定时器
@@ -567,7 +574,7 @@ export class WebSocketManager {
         try {
           this.ws!.send(JSON.stringify(message));
           console.log(
-            `[WebSocket] Retry sent: type=${message.messageType}, id=${message.id}, attempt=${nextRetryCount}/${maxRetries}`
+            `[WebSocket] Retry sent: type=${message.messageType}, id=${message.id}, attempt=${nextRetryCount}/${maxRetries}`,
           );
 
           // 更新重试计数
@@ -579,7 +586,7 @@ export class WebSocketManager {
         } catch (error) {
           console.error(
             `[WebSocket] Retry send error for ${messageId}:`,
-            error
+            error,
           );
           this.handleMessageTimeout(messageId, maxRetries); // 重试发送失败也触发超时处理
         }
@@ -644,7 +651,7 @@ export class WebSocketManager {
     if (this.pendingMessages.size === 0) return;
 
     console.log(
-      `[WebSocket] Retrying ${this.pendingMessages.size} pending messages`
+      `[WebSocket] Retrying ${this.pendingMessages.size} pending messages`,
     );
 
     this.pendingMessages.forEach((pending, messageId) => {
@@ -666,7 +673,7 @@ export class WebSocketManager {
         } catch (error) {
           console.error(
             `[WebSocket] Failed to retry pending message ${messageId}:`,
-            error
+            error,
           );
         }
       }
@@ -748,7 +755,7 @@ export class WebSocketManager {
 
     if (this.waitingForPong) {
       console.warn(
-        "[WebSocket] Previous pong not received, connection may be dead"
+        "[WebSocket] Previous pong not received, connection may be dead",
       );
       this.handlePongTimeout();
       return;
@@ -825,11 +832,11 @@ export class WebSocketManager {
 
     const delay = Math.min(
       this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1),
-      30000
+      30000,
     );
 
     console.log(
-      `[WebSocket] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`
+      `[WebSocket] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`,
     );
 
     this.reconnectTimer = window.setTimeout(() => {
@@ -865,7 +872,7 @@ export class WebSocketManager {
       } catch (error) {
         console.error(
           `[WebSocket] Message callback error for ${messageType}:`,
-          error
+          error,
         );
       }
     });
@@ -894,7 +901,7 @@ const managerInstances = new Map<string, WebSocketManager>();
 
 export function getWebSocketManager(
   userId: string | number,
-  wsUrl?: string
+  wsUrl?: string,
 ): WebSocketManager {
   const key = String(userId); // ✅ Force string key
   if (!managerInstances.has(key)) {

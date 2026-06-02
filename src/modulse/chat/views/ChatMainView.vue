@@ -410,10 +410,20 @@ onMounted(async () => {
 
   console.log("[ChatMain] Orders loaded:", orders.value.length);
 
-  // 处理从登录跳转过来的orderId
+  // 处理从登录跳转过来的orderId或bssOrderId
   const initialOrderId = route.query.orderId as string;
+  const initialBssOrderId = route.query.bssOrderId as string;
+  
   if (initialOrderId) {
     await handleOrderSelect(initialOrderId);
+    router.replace({ query: {} });
+  } else if (initialBssOrderId) {
+    const targetOrder = orderStore.orderList.find(o => o.bssOrderId === Number(initialBssOrderId));
+    if (targetOrder) {
+      await handleOrderSelect(targetOrder.orderId);
+    } else {
+      ElMessage.warning("未找到匹配的订单");
+    }
     router.replace({ query: {} });
   }
 });

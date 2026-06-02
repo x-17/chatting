@@ -74,7 +74,7 @@ const router = createRouter({
   routes: [
     {
       path: "/",
-      redirect: "/login-psw",
+      redirect: "/login",
     },
     // 合并所有模块的路由
     ...authRoutes,

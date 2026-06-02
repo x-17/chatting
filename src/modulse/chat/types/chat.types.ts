@@ -7,7 +7,7 @@ export type ChatMessage = P2PMessage | GroupMessage;
 
 export interface Order {
   id: string;
-  title: string; // ¶©µ¥±êÌâ
+  title: string; // è®¢å•æ ‡é¢˜
   type: "purchase" | "sale";
   status: "active" | "completed";
   otherParty: {
@@ -15,14 +15,16 @@ export interface Order {
     name: string;
     avatar?: string;
   };
-  conversationId: string; // »á»°ID
+  conversationId: string; // ä¼šè¯ID
   conversationType: "p2p" | "group";
-  unreadCount: number; // Î´¶ÁÏûÏ¢Êı
-  lastMessageTime?: number; // ×îºóÏûÏ¢Ê±¼ä
-  lastMessageContent?: string; // ×îºóÏûÏ¢ÄÚÈİ
+  unreadCount: number; // æœªè¯»æ¶ˆæ¯æ•°
+  lastMessageTime?: number; // æœ€åæ¶ˆæ¯æ—¶é—´
+  lastMessageContent?: string; // æœ€åæ¶ˆæ¯å†…å®¹
   amount?: number;
   currency?: string;
   createdAt?: number;
+  parentOrderId?: string;
+  objectionReason?: string;
   metadata?: {
     unreadCount?: number;
     lastMessageTime?: number;

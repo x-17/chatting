@@ -13,9 +13,9 @@ export default defineConfig({
   build: {
     rollupOptions: {
       external: [
-        // 排除 src/ignore-dir 目录（支持正则）
+        // 鎺掗櫎 src/ignore-dir 鐩綍锛堟敮鎸佹鍒欙級
         /src\/ignore-dir\/.*/,
-        // 排除单个文件
+        // 鎺掗櫎鍗曚釜鏂囦欢
         "src/views/E2eeCompleteTest2.vue",
         "src/views/E2eeCompleteTest2.vue",
         "/src/views/E2eeTestPage.vue",
@@ -24,6 +24,9 @@ export default defineConfig({
         "/src/views/MockChatTest.vue",
       ],
     },
+  },
+  server: {
+    port: 5174,
   },
   // server: {
   //   proxy: {

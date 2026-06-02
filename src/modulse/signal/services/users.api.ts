@@ -46,7 +46,7 @@ export class UsersApiService {
   async getKeyBundleForUser(tenantId: string) {
     try {
       // 1. 转换tenantId为number类型（匹配后端接口要求），并发起POST请求
-      const response = await this.apiClient.post("/user/p2pGetUserKeys", {
+      const response = await this.apiClient.post("/user/getUserKeys", {
         tenantId: Number(tenantId), // 转换为number传给后端
       });
 

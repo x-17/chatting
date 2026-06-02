@@ -346,34 +346,54 @@ export class EnhancedP2PMessageRouter {
 
       const progressCallback = this.uploadProgressCallbacks.get(fileId);
 
-      // 3. 加密文件
-      const encryptedPackage = await fileEncryptionService.encryptFileForP2P(
-        file,
-        this.myUserId,
-        recipientId,
-        progressCallback
-      );
+      // 3. 准备文件 (如果是 contract 则不加密，否则加密)
+      let backendFileId: number;
+      let frontendFileIdStr: string;
+      let fileMessageContent: string;
 
-      // 4. 上传加密文件到服务器
-      const backendFileId = await this.uploadEncryptedFileToServer(
-        encryptedPackage.encryptedContent,
-        file.name, // 原始文件名
-        orderId,
-        fileId // 前端 fileId 用于进度跟踪
-      );
+      if (messageType === 'contract') {
+        const fileContent = await file.arrayBuffer();
+        backendFileId = await this.uploadEncryptedFileToServer(
+          fileContent,
+          file.name, // 原始文件名
+          orderId,
+          fileId // 前端 fileId 用于进度跟踪
+        );
+        frontendFileIdStr = fileId;
+        fileMessageContent = JSON.stringify({
+          fileId: backendFileId,
+          frontendFileId: fileId,
+          fileName: file.name,
+          fileSize: file.size,
+          mimeType: file.type,
+          isPlaintext: true, // 标识为明文
+        });
+      } else {
+        const encryptedPackage = await fileEncryptionService.encryptFileForP2P(
+          file,
+          this.myUserId,
+          recipientId,
+          progressCallback
+        );
+        backendFileId = await this.uploadEncryptedFileToServer(
+          encryptedPackage.encryptedContent,
+          file.name, // 原始文件名
+          orderId,
+          fileId // 前端 fileId 用于进度跟踪
+        );
+        frontendFileIdStr = encryptedPackage.fileId;
+        fileMessageContent = JSON.stringify({
+          fileId: backendFileId, // 使用后端返回的数字ID
+          frontendFileId: encryptedPackage.fileId, // 保留前端ID用于关联
+          fileName: file.name,
+          fileSize: file.size,
+          mimeType: file.type,
+          metadata: encryptedPackage.metadata,
+          signature: encryptedPackage.signature,
+        });
+      }
 
-      // 5. 构建文件消息内容
-      const fileMessageContent = JSON.stringify({
-        fileId: backendFileId, // 使用后端返回的数字ID
-        frontendFileId: encryptedPackage.fileId, // 保留前端ID用于关联
-        fileName: file.name,
-        fileSize: file.size,
-        mimeType: file.type,
-        metadata: encryptedPackage.metadata,
-        signature: encryptedPackage.signature,
-      });
-
-      // 6. 加密文件消息
+      // 6. 加密文件消息 (消息体还是加密的，只是内容标识为明文)
       const encryptionResult = await e2eeService.encryptMessage(
         this.myUserId,
         recipientId,
@@ -404,7 +424,7 @@ export class EnhancedP2PMessageRouter {
         deliveryConfirmed: false,
         readConfirmed: false,
         metadata: {
-          fileId: encryptedPackage.fileId,
+          fileId: frontendFileIdStr,
           fileName: file.name,
           fileSize: file.size,
           mimeType: file.type,
@@ -641,36 +661,48 @@ export class EnhancedP2PMessageRouter {
         fileContentResponse.fileContent
       );
 
-      // 4. 重建加密包
-      const encryptedPackage: EncryptedFilePackage = {
-        fileId: frontendFileId, // 使用前端ID
-        metadata: fileMessageData.metadata, // 从消息中获取
-        encryptedContent: encryptedContent,
-        signature: fileMessageData.signature, // 从消息中获取
-      };
+      let contentBuffer: ArrayBuffer;
+      let mimeType = fileMessageData.mimeType;
+      let originalName = fileMessageData.fileName;
+      let isVerified = true;
 
-      // 5. 解密文件
-      const decryptionResult = await fileEncryptionService.decryptP2PFile(
-        encryptedPackage,
-        this.myUserId,
-        message.senderId
-      );
+      if (fileMessageData.signature && fileMessageData.metadata) {
+        // 兼容旧版本的加密合约
+        const encryptedPackage: EncryptedFilePackage = {
+          fileId: frontendFileId, // 使用前端ID
+          metadata: fileMessageData.metadata, // 从消息中获取
+          encryptedContent: encryptedContent,
+          signature: fileMessageData.signature, // 从消息中获取
+        };
+
+        const decryptionResult = await fileEncryptionService.decryptP2PFile(
+          encryptedPackage,
+          this.myUserId,
+          message.senderId
+        );
+        contentBuffer = decryptionResult.content;
+        mimeType = decryptionResult.mimeType;
+        originalName = decryptionResult.originalName;
+        isVerified = decryptionResult.isVerified;
+      } else {
+        // 新版本明文合约
+        contentBuffer = encryptedContent;
+      }
 
       // 🔧 修正 MIME 类型：如果文件名以 .pdf 结尾，强制使用 application/pdf
-      let mimeType = decryptionResult.mimeType;
-      if (decryptionResult.originalName.toLowerCase().endsWith(".pdf")) {
+      if (originalName.toLowerCase().endsWith(".pdf")) {
         mimeType = "application/pdf";
       }
 
       // 6. 创建本地下载链接并触发下载
       const downloadUrl = fileEncryptionService.createDownloadUrl(
-        decryptionResult.content,
-        decryptionResult.originalName,
+        contentBuffer,
+        originalName,
         mimeType
       );
 
       if (triggerDownload) {
-        this.triggerFileDownload(downloadUrl, decryptionResult.originalName);
+        this.triggerFileDownload(downloadUrl, originalName);
       }
 
       console.log(
@@ -681,11 +713,11 @@ export class EnhancedP2PMessageRouter {
         success: true,
         data: {
           fileId: fileMessageData.fileId,
-          fileName: decryptionResult.originalName,
+          fileName: originalName,
           mimeType: mimeType,
-          size: decryptionResult.size,
+          size: contentBuffer.byteLength,
           downloadUrl: downloadUrl,
-          isVerified: decryptionResult.isVerified,
+          isVerified: isVerified,
           orderId: message.orderId,
         },
         metadata: { timing: Date.now() - startTime },

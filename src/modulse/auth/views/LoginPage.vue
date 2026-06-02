@@ -191,15 +191,28 @@ const validateEnvironment = () => {
 
 // 处理路由参数
 const handleRouteParams = () => {
-  const str = route.hash;
-  console.log(route.hash);
-  // const str = "orderId#/sso?orderId=1111&otherParam=xxx"; // 示例字符串，可替换为实际需提取的串
+  // Use route.fullPath or window.location.href to ensure we catch parameters properly
+  const str = route.hash || window.location.href;
+  console.log("parsing route string:", str);
+  
   const regex = /(?<=orderId=)[^&]+/;
-  const orderId = str.match(regex)?.[0] || "未匹配到orderId";
-  console.log(orderId); // 输出：1111
-  if (typeof orderId === "string" && orderId) {
+  const match = str.match(regex);
+  const orderId = match ? match[0] : null;
+  console.log("parsed orderId:", orderId);
+
+  const parentRegex = /(?<=parentOrderId=)[^&]+/;
+  const parentMatch = str.match(parentRegex);
+  const parentOrderId = parentMatch ? parentMatch[0] : null;
+  console.log("parsed parentOrderId:", parentOrderId);
+
+  if (orderId) {
     sessionStorage.setItem("redirect_context_orderId", orderId);
     console.log(`Context saved: orderId = ${orderId}`);
+    
+    if (parentOrderId) {
+      sessionStorage.setItem("redirect_context_parentOrderId", parentOrderId);
+      console.log(`Context saved: parentOrderId = ${parentOrderId}`);
+    }
 
     // 显示上下文信息
     showErrorAlert("info", "业务上下文", `订单 ${orderId} 需要登录后继续处理`);
