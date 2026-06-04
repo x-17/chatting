@@ -9,6 +9,7 @@ export interface OrderParticipant {
   id: number;
   orderId: string;
   userId: number;
+  username?: string;
   // userName: string;
   roleType: 0 | 1; // 0 - 买家, 1 - 卖家
   // creditScore: number;

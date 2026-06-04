@@ -7,6 +7,13 @@
         <h2>订单磋商</h2>
       </div>
       <div class="navbar-right">
+        <el-badge>
+          <el-button text @click="graphVisible = true" title="交易图谱">
+            <el-icon>
+              <Connection />
+            </el-icon>
+          </el-button>
+        </el-badge>
         <el-badge :value="totalUnreadCount" :hidden="totalUnreadCount === 0">
           <el-button text @click="user2MockLogin">
             <el-icon>
@@ -109,6 +116,11 @@
         </div>
       </div>
     </el-dialog>
+
+    <!-- 交易图谱弹窗 -->
+    <el-dialog v-model="graphVisible" title="交易图谱" width="80%" :close-on-click-modal="false" destroy-on-close>
+      <TransactionGraph :orders="orders" :current-user-id="currentUserId" :current-user-name="userName" />
+    </el-dialog>
   </div>
 </template>
 
@@ -116,7 +128,8 @@
 import { ref, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import { Message, DArrowLeft, DArrowRight } from "@element-plus/icons-vue";
+import { Message, DArrowLeft, DArrowRight, Connection } from "@element-plus/icons-vue";
+import TransactionGraph from "../components/TransactionGraph.vue";
 import OrderList from "../components/OrderList.vue";
 import MessageArea from "../components/MessageArea.vue";
 import MessageInput from "../components/MessageInput.vue";
@@ -132,6 +145,11 @@ const route = useRoute();
 const router = useRouter();
 
 const showOrderDetail = ref(true);
+const graphVisible = ref(false);
+
+const currentUserId = computed(() => {
+  return sessionStorage.getItem("auth_current_user_id") || "101";
+});
 
 // 使用 composables
 const {
