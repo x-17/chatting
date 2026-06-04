@@ -7,6 +7,13 @@
         <h2>订单磋商</h2>
       </div>
       <div class="navbar-right">
+        <el-badge>
+          <el-button text @click="graphVisible = true" title="交易图谱">
+            <el-icon>
+              <Connection />
+            </el-icon>
+          </el-button>
+        </el-badge>
         <el-badge :value="totalUnreadCount" :hidden="totalUnreadCount === 0">
           <el-button text @click="user2MockLogin">
             <el-icon>
@@ -109,6 +116,11 @@
         </div>
       </div>
     </el-dialog>
+
+    <!-- 交易图谱弹窗 -->
+    <el-dialog v-model="graphVisible" title="交易图谱" width="80%" :close-on-click-modal="false" destroy-on-close>
+      <TransactionGraph :orders="orders" :current-user-id="currentUserId" :current-user-name="userName" />
+    </el-dialog>
   </div>
 </template>
 
@@ -116,7 +128,8 @@
 import { ref, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import { Message, DArrowLeft, DArrowRight } from "@element-plus/icons-vue";
+import { Message, DArrowLeft, DArrowRight, Connection } from "@element-plus/icons-vue";
+import TransactionGraph from "../components/TransactionGraph.vue";
 import OrderList from "../components/OrderList.vue";
 import MessageArea from "../components/MessageArea.vue";
 import MessageInput from "../components/MessageInput.vue";
@@ -132,6 +145,18 @@ const route = useRoute();
 const router = useRouter();
 
 const showOrderDetail = ref(true);
+const graphVisible = ref(false);
+
+const currentUserId = computed(() => {
+  const authId = sessionStorage.getItem("auth_current_user_id");
+  if (authId) {
+    const prefix = `auth_${authId}`;
+    const user = JSON.parse(localStorage.getItem(`${prefix}_user`) || "{}");
+    if (user.id) return String(user.id);
+    if (user.userId) return String(user.userId);
+  }
+  return authId || "196";
+});
 
 // 使用 composables
 const {
@@ -171,7 +196,7 @@ const userName = computed(() => {
   const userId = sessionStorage.getItem("auth_current_user_id");
   const prefix = `auth_${userId}`;
   const user = JSON.parse(localStorage.getItem(`${prefix}_user`) || "{}");
-  return user.userName || "用户";
+  return user.userName || user.username || "用户";
 });
 
 //头像首字母
@@ -409,6 +434,217 @@ onMounted(async () => {
   await syncOfflineMessages();
 
   console.log("[ChatMain] Orders loaded:", orders.value.length);
+
+  // ================= 模拟真实数据测试 =================
+  if (orders.value.length === 0) {
+    const realMockData = [
+        {
+            "id": 42,
+            "orderId": "OD2026041610215730",
+            "dataName": "??????????",
+            "flag": 4,
+            "bssOrderId": 1616,
+            "parentOrderId": null,
+            "objectionReason": null,
+            "orderType": 0,
+            "contract": null,
+            "participants": [
+                {
+                    "id": 84,
+                    "orderId": "OD2026041610215730",
+                    "userId": 237,
+                    "roleType": 0,
+                    "dataName": "??????????",
+                    "username": "zhonghongling"
+                },
+                {
+                    "id": 83,
+                    "orderId": "OD2026041610215730",
+                    "userId": 196,
+                    "roleType": 1,
+                    "dataName": "??????????",
+                    "username": "matengzhao"
+                }
+            ]
+        },
+        {
+            "id": 43,
+            "orderId": "OD2026050620151870",
+            "dataName": "test",
+            "flag": 4,
+            "bssOrderId": 1623,
+            "parentOrderId": null,
+            "objectionReason": null,
+            "orderType": 0,
+            "contract": null,
+            "participants": [
+                {
+                    "id": 86,
+                    "orderId": "OD2026050620151870",
+                    "userId": 237,
+                    "roleType": 0,
+                    "dataName": "test",
+                    "username": "zhonghongling"
+                },
+                {
+                    "id": 85,
+                    "orderId": "OD2026050620151870",
+                    "userId": 196,
+                    "roleType": 1,
+                    "dataName": "test",
+                    "username": "matengzhao"
+                }
+            ]
+        },
+        {
+            "id": 44,
+            "orderId": "OD2026041710096276",
+            "dataName": "20260408-newpro-yf",
+            "flag": 4,
+            "bssOrderId": 1622,
+            "parentOrderId": null,
+            "objectionReason": null,
+            "orderType": 0,
+            "contract": null,
+            "participants": [
+                {
+                    "id": 87,
+                    "orderId": "OD2026041710096276",
+                    "userId": 237,
+                    "roleType": 1,
+                    "dataName": "20260408-newpro-yf",
+                    "username": "zhonghongling"
+                },
+                {
+                    "id": 88,
+                    "orderId": "OD2026041710096276",
+                    "userId": 196,
+                    "roleType": 0,
+                    "dataName": "20260408-newpro-yf",
+                    "username": "matengzhao"
+                }
+            ]
+        },
+        {
+            "id": 45,
+            "orderId": "OD2026041710096278",
+            "dataName": "?????",
+            "flag": 5,
+            "bssOrderId": 1700,
+            "parentOrderId": null,
+            "objectionReason": null,
+            "orderType": 0,
+            "contract": null,
+            "participants": [
+                {
+                    "id": 89,
+                    "orderId": "OD2026041710096278",
+                    "userId": 237,
+                    "roleType": 1,
+                    "dataName": "?????",
+                    "username": "zhonghongling"
+                },
+                {
+                    "id": 90,
+                    "orderId": "OD2026041710096278",
+                    "userId": 196,
+                    "roleType": 0,
+                    "dataName": "?????",
+                    "username": "matengzhao"
+                }
+            ]
+        },
+        {
+            "id": 46,
+            "orderId": "OD2026041710096279",
+            "dataName": "?????",
+            "flag": 4,
+            "bssOrderId": 1701,
+            "parentOrderId": "OD2026041710096278",
+            "objectionReason": "??????",
+            "orderType": 0,
+            "contract": null,
+            "participants": [
+                {
+                    "id": 91,
+                    "orderId": "OD2026041710096279",
+                    "userId": 237,
+                    "roleType": 1,
+                    "dataName": "?????",
+                    "username": "zhonghongling"
+                },
+                {
+                    "id": 92,
+                    "orderId": "OD2026041710096279",
+                    "userId": 196,
+                    "roleType": 0,
+                    "dataName": "?????",
+                    "username": "matengzhao"
+                }
+            ]
+        },
+        {
+            "id": 47,
+            "orderId": "OD2026041710096280",
+            "dataName": "????",
+            "flag": 4,
+            "bssOrderId": 1702,
+            "parentOrderId": null,
+            "objectionReason": null,
+            "orderType": 0,
+            "contract": null,
+            "participants": [
+                {
+                    "id": 93,
+                    "orderId": "OD2026041710096280",
+                    "userId": 196,
+                    "roleType": 1,
+                    "dataName": "????",
+                    "username": "matengzhao"
+                },
+                {
+                    "id": 94,
+                    "orderId": "OD2026041710096280",
+                    "userId": 666,
+                    "roleType": 0,
+                    "dataName": "????",
+                    "username": "wangwangwang"
+                }
+            ]
+        },
+        {
+            "id": 48,
+            "orderId": "OD2026041710096281",
+            "dataName": "????2",
+            "flag": 4,
+            "bssOrderId": 1703,
+            "parentOrderId": null,
+            "objectionReason": null,
+            "orderType": 0,
+            "contract": null,
+            "participants": [
+                {
+                    "id": 95,
+                    "orderId": "OD2026041710096281",
+                    "userId": 196,
+                    "roleType": 1,
+                    "dataName": "????2",
+                    "username": "matengzhao"
+                },
+                {
+                    "id": 96,
+                    "orderId": "OD2026041710096281",
+                    "userId": 666,
+                    "roleType": 0,
+                    "dataName": "????2",
+                    "username": "wangwangwang"
+                }
+            ]
+        }
+    ];
+    orders.value.push(...realMockData as any[]);
+  }
+  // ===============================================
 
   // 处理从登录跳转过来的orderId或bssOrderId
   const initialOrderId = route.query.orderId as string;
