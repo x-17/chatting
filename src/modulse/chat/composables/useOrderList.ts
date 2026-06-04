@@ -62,6 +62,7 @@ export function useOrderList() {
         parentOrderId: order.parentOrderId,
         objectionReason: order.objectionReason,
         metadata: order.metadata || { unreadCount: 0 },
+        participants: order.participants, // 传递 participants 给图谱使用
       };
     });
   });
