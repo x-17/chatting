@@ -27,10 +27,25 @@ const initChart = () => {
   const nodesMap = new Map<string, any>();
   const linksMap = new Map<string, any>();
   
+  let realCenterId = String(props.currentUserId);
+  
+  // 尝试通过用户名从订单中找到真实的数据库 userId
+  for (const order of props.orders) {
+    if (!order.participants) continue;
+    const me = order.participants.find(p => 
+      String(p.userId) === realCenterId || 
+      (p.username && p.username === props.currentUserName) ||
+      (p.userName && p.userName === props.currentUserName)
+    );
+    if (me) {
+      realCenterId = String(me.userId);
+      break;
+    }
+  }
+
   // Center node
-  const centerId = String(props.currentUserId);
-  nodesMap.set(centerId, {
-    id: centerId,
+  nodesMap.set(realCenterId, {
+    id: realCenterId,
     name: props.currentUserName,
     symbolSize: 60,
     category: 0
@@ -40,12 +55,12 @@ const initChart = () => {
     if (!order.participants) return;
     
     // Check if current user is in this order
-    const isCurrentUserInvolved = order.participants.some(p => String(p.userId) === centerId);
+    const isCurrentUserInvolved = order.participants.some(p => String(p.userId) === realCenterId);
     
     if (isCurrentUserInvolved) {
       order.participants.forEach(p => {
         const pId = String(p.userId);
-        if (pId !== centerId) {
+        if (pId !== realCenterId) {
           // Add other participant as node
           if (!nodesMap.has(pId)) {
             nodesMap.set(pId, {
@@ -57,10 +72,10 @@ const initChart = () => {
           }
           
           // Add link
-          const linkId = `${centerId}-${pId}`;
+          const linkId = `${realCenterId}-${pId}`;
           if (!linksMap.has(linkId)) {
             linksMap.set(linkId, {
-              source: centerId,
+              source: realCenterId,
               target: pId,
               value: 1,
               lineStyle: { width: 2 }
