@@ -157,9 +157,9 @@
                 <span class="label">数据名称：</span>
                 <span class="value">{{ node.dataName || '未知' }}</span>
               </div>
-              <div class="dispute-field" v-if="node.objectionReason">
+              <div class="dispute-field" v-if="node.displayObjectionReason">
                 <span class="label">争议原因：</span>
-                <span class="value reason">{{ node.objectionReason }}</span>
+                <span class="value reason">{{ node.displayObjectionReason }}</span>
               </div>
             </el-card>
           </el-timeline-item>
@@ -195,6 +195,10 @@ interface Props {
   order: ChatOrder;
 }
 
+interface DisputeGraphNode extends FullOrder {
+  displayObjectionReason?: string;
+}
+
 interface Emits {
   (e: "close"): void;
   (e: "create-contract"): void;
@@ -217,7 +221,7 @@ const hasDispute = computed(() => {
 
 const disputeDialogVisible = ref(false);
 const disputeGraphLoading = ref(false);
-const disputeNodes = ref<FullOrder[]>([]);
+const disputeNodes = ref<DisputeGraphNode[]>([]);
 
 const reversedDisputeNodes = computed(() => {
   return [...disputeNodes.value].reverse();
@@ -227,33 +231,38 @@ async function showDisputeGraph() {
   disputeDialogVisible.value = true;
   disputeGraphLoading.value = true;
   disputeNodes.value = [];
-  
+
   try {
-    let currentId = props.order.id;
+    let currentOrder = orderStore.getOrderById(props.order.id);
+    let reasonFromChild: string | undefined;
     let safeGuard = 0;
-    while (currentId && safeGuard < 20) {
+    while (currentOrder && safeGuard < 20) {
       safeGuard++;
-      let order = orderStore.getOrderById(currentId);
-      if (!order) {
-        try {
-          order = await orderStore.fetchOrder(currentId);
-        } catch (e) {
-          console.warn("Could not fetch order details for", currentId);
-          disputeNodes.value.push({
-            orderId: currentId,
-            dataName: '未获取到详情',
-            objectionReason: '未知',
-          } as FullOrder);
-          break;
-        }
-      }
-      
-      if (order) {
-        disputeNodes.value.push(order);
-        currentId = order.parentOrderId;
-      } else {
+      const parentBssOrderId = currentOrder.parentOrderId;
+
+      disputeNodes.value.push({
+        ...currentOrder,
+        // 争议原因保存在子订单上，图谱中展示在其历史父订单节点。
+        displayObjectionReason:
+          reasonFromChild || (!parentBssOrderId ? currentOrder.objectionReason : undefined),
+      });
+
+      if (!parentBssOrderId) {
         break;
       }
+
+      reasonFromChild = currentOrder.objectionReason || undefined;
+      const parentOrder = orderStore.orderList.find(
+        (order) => String(order.bssOrderId) === String(parentBssOrderId),
+      );
+
+      if (!parentOrder) {
+        console.warn("Historical order is not present in the order list:", parentBssOrderId);
+        ElMessage.warning("未找到关联的历史订单，无法完整展示争议图谱");
+        break;
+      }
+
+      currentOrder = parentOrder;
     }
   } catch (error) {
     console.error("Failed to load dispute graph:", error);
