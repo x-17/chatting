@@ -380,6 +380,13 @@ export function useChat() {
       return `${yyyy}-${MM}-${dd} ${HH}:${mm}:${ss}`;
     };
 
+    const fileBuffer = await file.arrayBuffer();
+    const { e2eeService } = await import("../../signal/services/e2ee.service");
+    const signature = await e2eeService.signContract(
+      myUserId,
+      new Uint8Array(fileBuffer)
+    );
+
     const contract_res = await ContractServiceInstance.uploadOrderQuote({
       orderId: order.id,
       amount: details.amount,
@@ -387,6 +394,7 @@ export function useChat() {
       usageStartTime: formatDate(details.usageStartTime),
       usageEndTime: formatDate(details.usageEndTime),
       fileId: res.data.fileId,
+      signature: signature,
     });
     ElMessage.success(contract_res.data);
     console.log("Contract sign response:", contract_res.data);

@@ -349,6 +349,38 @@ export const useAuthStore = defineStore("auth", {
       }
     },
 
+    async handleTicketCallback(ticket: string, orderId: string, parentOrderId?: string): Promise<boolean> {
+      if (this.isProcessing) {
+        console.warn("[Auth] Authentication in progress");
+        return false;
+      }
+
+      try {
+        this.isProcessing = true;
+        this.status = "loading";
+        this.errorMessage = "";
+
+        const response = await this.withTimeout(
+          authApiService.loginByTicket(ticket, orderId, parentOrderId),
+          CONFIG.REQUEST_TIMEOUT
+        );
+
+        if (response.code === 1) {
+          return this.handleExistingUser(response.data);
+        }
+
+        if (response.code === 0 && response.data?.tenantId) {
+          return await this.handleNewUser(response.data);
+        }
+
+        throw new Error(response.msg || "未知的认证响应");
+      } catch (error: any) {
+        return this.handleAuthError(error);
+      } finally {
+        this.isProcessing = false;
+      }
+    },
+
     /**
      * ✅ 处理已存在用户
      */

@@ -259,44 +259,55 @@ export class ContractService {
    * 完整流程：获取文件 ID → 拿下载 URL → 下载二进制文件
    */
   async getBinaryFileByFileId(fileId: string): Promise<ArrayBuffer | null> {
-    // 1. 获取下载 URL
-    const downloadUrl = await this.apiService.getFileDownloadUrl(fileId);
-    if (!downloadUrl) {
+    const fileData = await this.apiService.downloadFileContentBase64(Number(fileId));
+    if (!fileData) {
       return null;
     }
 
-    // 2. 下载二进制文件
-    const binaryData = await this.apiService.downloadFile(downloadUrl);
-    return binaryData;
+    try {
+      // 移除可能的数据URL前缀
+      const base64Data = fileData.fileContent.replace(/^data:[^;]+;base64,/, "");
+      // Base64解码
+      const binaryString = window.atob(base64Data);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return bytes.buffer;
+    } catch (error) {
+      console.error("Base64 decoding failed:", error);
+      return null;
+    }
   }
   async agreeOderSign(
     orderId: string,
-    fileId: string
+    fileId: string,
+    signature?: string
   ): Promise<ApiResponse<string>> {
-    // const fileContent = await this.getBinaryFileByFileId(fileId);
-    // if (!fileContent) {
-    //   throw new Error("无法下载合同文件");
-    // }
-    // const signature = await e2eeService.signContract(
-    //   this.myUserId,
-    //   new Uint8Array(fileContent)
-    // );
-    const signature = await getSigningPrivateKey(this.myUserId);
+    let finalSignature = signature;
+    if (!finalSignature) {
+      const fileContent = await this.getBinaryFileByFileId(fileId);
+      if (!fileContent) {
+        throw new Error("无法下载合同文件");
+      }
+      finalSignature = await e2eeService.signContract(
+        this.myUserId,
+        new Uint8Array(fileContent)
+      );
+    }
+
     return await this.apiService.orderSign({
       orderId: orderId,
       fileId: Number(fileId),
-      signature: signature,
+      signature: finalSignature,
     });
   }
 
   async uploadOrderQuote(
-    params: Omit<UploadOrderQuoteRequest, "signature">
+    params: UploadOrderQuoteRequest
   ): Promise<ApiResponse<string>> {
-    const signature = await getSigningPrivateKey(this.myUserId);
-    return await this.apiService.uploadOrderQuote({
-      ...params,
-      signature: signature,
-    });
+    return await this.apiService.uploadOrderQuote(params);
   }
   async queryOrderSignState(orderId: string) {
     return await this.apiService.queryOrderSignStateApi(orderId);

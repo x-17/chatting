@@ -85,18 +85,20 @@ export class EnhancedP2PMessageRouter {
    */
   async waitForConnection(timeoutMs: number = 15000): Promise<boolean> {
     if (this.wsManager.isConnected()) {
-      console.log('[P2PRouter] WaitForConnection: Already connected');
+      console.log("[P2PRouter] WaitForConnection: Already connected");
       return true;
     }
 
-    console.log(`[P2PRouter] Waiting for connection (timeout: ${timeoutMs}ms)...`);
+    console.log(
+      `[P2PRouter] Waiting for connection (timeout: ${timeoutMs}ms)...`,
+    );
 
     return new Promise<boolean>((resolve) => {
       let timeoutId: number;
 
       const checkConnection = (status: string) => {
-        if (status === 'connected') {
-          console.log('[P2PRouter] WaitForConnection: Connected');
+        if (status === "connected") {
+          console.log("[P2PRouter] WaitForConnection: Connected");
           clearTimeout(timeoutId);
           // 移除监听器不需要显式调用，因为 onStatusChange 目前只是推入数组。
           // 如果需要真正的清理，需要在 WebSocketManager 或 Router 中实现 removeListener，
@@ -113,7 +115,7 @@ export class EnhancedP2PMessageRouter {
       this.onStatusChange(checkConnection);
 
       timeoutId = window.setTimeout(() => {
-        console.warn('[P2PRouter] WaitForConnection: Timeout');
+        console.warn("[P2PRouter] WaitForConnection: Timeout");
         resolve(false);
       }, timeoutMs);
     });
@@ -126,7 +128,7 @@ export class EnhancedP2PMessageRouter {
     orderId: string,
     content: string,
     type: P2PMessage["type"] = "text",
-    _recipientId: string
+    _recipientId: string,
   ): Promise<IP2PRouterResponse> {
     const startTime = Date.now();
     const messageId = this.generateMessageId();
@@ -137,7 +139,7 @@ export class EnhancedP2PMessageRouter {
       const recipientId = _recipientId;
 
       console.log(
-        `[P2PRouter] Sending ${type} message for order ${orderId} to ${recipientId}`
+        `[P2PRouter] Sending ${type} message for order ${orderId} to ${recipientId}`,
       );
 
       // 2. 确保加密会话
@@ -147,7 +149,7 @@ export class EnhancedP2PMessageRouter {
       const encryptionResult = await e2eeService.encryptMessage(
         this.myUserId,
         recipientId,
-        content
+        content,
       );
 
       if (!encryptionResult.success) {
@@ -249,7 +251,7 @@ export class EnhancedP2PMessageRouter {
         await this.persistence.updateMessageStatus(messageId, "delivered");
 
         console.log(
-          `[P2PRouter] Message sent and marked as delivered via ${sendMethod}`
+          `[P2PRouter] Message sent and marked as delivered via ${sendMethod}`,
         );
       } else {
         // 发送失败,更新为失败状态
@@ -286,7 +288,7 @@ export class EnhancedP2PMessageRouter {
       } catch (updateError) {
         console.error(
           `[P2PRouter] Failed to update message status:`,
-          updateError
+          updateError,
         );
       }
 
@@ -298,26 +300,31 @@ export class EnhancedP2PMessageRouter {
     }
   }
 
-
-
   /**
    * ✅ 发送密钥请求 (P2P)
    */
   async sendKeyRequest(
     targetUserId: string,
-    orderId: string
+    orderId: string,
   ): Promise<IP2PRouterResponse> {
     const requestContent = JSON.stringify({
-      type: 'KEY_REQUEST',
+      type: "KEY_REQUEST",
       payload: {
         orderId,
-        senderId: this.myUserId
-      }
+        senderId: this.myUserId,
+      },
     });
 
-    console.log(`[P2PRouter] Sending KEY_REQUEST to ${targetUserId} for order ${orderId}`);
+    console.log(
+      `[P2PRouter] Sending KEY_REQUEST to ${targetUserId} for order ${orderId}`,
+    );
     // Reuse generic sendMessage with 'key_request' message type
-    return this.sendMessage(orderId, requestContent, 'key_request' as any, targetUserId);
+    return this.sendMessage(
+      orderId,
+      requestContent,
+      "key_request" as any,
+      targetUserId,
+    );
   }
 
   /**
@@ -327,7 +334,7 @@ export class EnhancedP2PMessageRouter {
     orderId: string,
     file: File,
     _recipientId: string,
-    type?: "contract"
+    type?: "contract",
   ): Promise<IP2PRouterResponse> {
     const startTime = Date.now();
     const fileId = this.generateFileId();
@@ -338,7 +345,7 @@ export class EnhancedP2PMessageRouter {
       const recipientId = _recipientId;
 
       console.log(
-        `[P2PRouter] Sending file ${file.name} for order ${orderId} to ${recipientId}`
+        `[P2PRouter] Sending file ${file.name} for order ${orderId} to ${recipientId}`,
       );
 
       // 2. 确保加密会话
@@ -351,13 +358,20 @@ export class EnhancedP2PMessageRouter {
       let frontendFileIdStr: string;
       let fileMessageContent: string;
 
-      if (messageType === 'contract') {
+      if (messageType === "contract") {
         const fileContent = await file.arrayBuffer();
+        
+        // 签名合同
+        const signature = await e2eeService.signContract(
+          this.myUserId,
+          new Uint8Array(fileContent)
+        );
+        
         backendFileId = await this.uploadEncryptedFileToServer(
           fileContent,
           file.name, // 原始文件名
           orderId,
-          fileId // 前端 fileId 用于进度跟踪
+          fileId, // 前端 fileId 用于进度跟踪
         );
         frontendFileIdStr = fileId;
         fileMessageContent = JSON.stringify({
@@ -367,19 +381,20 @@ export class EnhancedP2PMessageRouter {
           fileSize: file.size,
           mimeType: file.type,
           isPlaintext: true, // 标识为明文
+          signature: signature, // 附加签名
         });
       } else {
         const encryptedPackage = await fileEncryptionService.encryptFileForP2P(
           file,
           this.myUserId,
           recipientId,
-          progressCallback
+          progressCallback,
         );
         backendFileId = await this.uploadEncryptedFileToServer(
           encryptedPackage.encryptedContent,
           file.name, // 原始文件名
           orderId,
-          fileId // 前端 fileId 用于进度跟踪
+          fileId, // 前端 fileId 用于进度跟踪
         );
         frontendFileIdStr = encryptedPackage.fileId;
         fileMessageContent = JSON.stringify({
@@ -397,7 +412,7 @@ export class EnhancedP2PMessageRouter {
       const encryptionResult = await e2eeService.encryptMessage(
         this.myUserId,
         recipientId,
-        fileMessageContent
+        fileMessageContent,
       );
 
       if (!encryptionResult.success) {
@@ -506,7 +521,7 @@ export class EnhancedP2PMessageRouter {
         // ✅ 乐观更新为 delivered
         await this.persistence.updateMessageStatus(messageId, "delivered");
         console.log(
-          `[P2PRouter] File message sent and marked as delivered via ${sendMethod}`
+          `[P2PRouter] File message sent and marked as delivered via ${sendMethod}`,
         );
       } else {
         // 发送失败，更新为失败状态
@@ -557,7 +572,7 @@ export class EnhancedP2PMessageRouter {
       }
 
       console.log(
-        `[P2PRouter] Downloading file for order ${message.orderId}: ${message.metadata.fileName}`
+        `[P2PRouter] Downloading file for order ${message.orderId}: ${message.metadata.fileName}`,
       );
 
       // 1. 解析文件消息
@@ -566,13 +581,12 @@ export class EnhancedP2PMessageRouter {
       const frontendFileId = fileMessageData.frontendFileId; // 前端ID用于进度
 
       // 2. 使用POST请求获取文件内容
-      const fileContentResponse = await this.postRequestFileContent(
-        backendFileId
-      );
+      const fileContentResponse =
+        await this.postRequestFileContent(backendFileId);
 
       // 3. 将Base64文件内容转换为ArrayBuffer
       const encryptedContent = this.base64ToArrayBuffer(
-        fileContentResponse.fileContent
+        fileContentResponse.fileContent,
       );
 
       // 4. 重建加密包
@@ -587,21 +601,21 @@ export class EnhancedP2PMessageRouter {
       const decryptionResult = await fileEncryptionService.decryptP2PFile(
         encryptedPackage,
         this.myUserId,
-        message.senderId
+        message.senderId,
       );
 
       // 6. 创建本地下载链接并触发下载
       const downloadUrl = fileEncryptionService.createDownloadUrl(
         decryptionResult.content,
         decryptionResult.originalName,
-        decryptionResult.mimeType
+        decryptionResult.mimeType,
       );
 
       // 7. 自动触发浏览器下载
       this.triggerFileDownload(downloadUrl, decryptionResult.originalName);
 
       console.log(
-        `[P2PRouter] Order file decrypted and download triggered successfully`
+        `[P2PRouter] Order file decrypted and download triggered successfully`,
       );
 
       return {
@@ -633,7 +647,7 @@ export class EnhancedP2PMessageRouter {
    */
   async downloadOrderContract(
     message: P2PMessage,
-    triggerDownload: boolean = true
+    triggerDownload: boolean = true,
   ): Promise<IP2PRouterResponse> {
     const startTime = Date.now();
 
@@ -643,7 +657,7 @@ export class EnhancedP2PMessageRouter {
       }
 
       console.log(
-        `[P2PRouter] Downloading contract for order ${message.orderId}: ${message.metadata.fileName}`
+        `[P2PRouter] Downloading contract for order ${message.orderId}: ${message.metadata.fileName}`,
       );
 
       // 1. 解析文件消息
@@ -652,13 +666,12 @@ export class EnhancedP2PMessageRouter {
       const frontendFileId = fileMessageData.frontendFileId; // 前端ID用于进度
 
       // 2. 使用POST请求获取文件内容
-      const fileContentResponse = await this.postRequestFileContent(
-        backendFileId
-      );
+      const fileContentResponse =
+        await this.postRequestFileContent(backendFileId);
 
       // 3. 将Base64文件内容转换为ArrayBuffer
       const encryptedContent = this.base64ToArrayBuffer(
-        fileContentResponse.fileContent
+        fileContentResponse.fileContent,
       );
 
       let contentBuffer: ArrayBuffer;
@@ -678,7 +691,7 @@ export class EnhancedP2PMessageRouter {
         const decryptionResult = await fileEncryptionService.decryptP2PFile(
           encryptedPackage,
           this.myUserId,
-          message.senderId
+          message.senderId,
         );
         contentBuffer = decryptionResult.content;
         mimeType = decryptionResult.mimeType;
@@ -687,6 +700,27 @@ export class EnhancedP2PMessageRouter {
       } else {
         // 新版本明文合约
         contentBuffer = encryptedContent;
+        
+        // 验签逻辑
+        if (fileMessageData.signature) {
+          const publicKeys = await e2eeService.getUserPublicKeys(message.senderId);
+          if (publicKeys && publicKeys.signingPubKey) {
+            isVerified = await e2eeService.verifyContractSignature(
+              fileMessageData.signature,
+              new Uint8Array(contentBuffer),
+              publicKeys.signingPubKey
+            );
+            if (!isVerified) {
+              throw new Error("合同签名验证失败，文件可能已被篡改");
+            }
+          } else {
+            isVerified = false;
+            throw new Error("无法获取发送方公钥，验签失败");
+          }
+        } else {
+          console.warn("[P2PRouter] Contract missing signature");
+          isVerified = false;
+        }
       }
 
       // 🔧 修正 MIME 类型：如果文件名以 .pdf 结尾，强制使用 application/pdf
@@ -698,7 +732,7 @@ export class EnhancedP2PMessageRouter {
       const downloadUrl = fileEncryptionService.createDownloadUrl(
         contentBuffer,
         originalName,
-        mimeType
+        mimeType,
       );
 
       if (triggerDownload) {
@@ -706,7 +740,7 @@ export class EnhancedP2PMessageRouter {
       }
 
       console.log(
-        `[P2PRouter] Order contract decrypted and download triggered successfully`
+        `[P2PRouter] Order contract decrypted and download triggered successfully`,
       );
 
       return {
@@ -759,7 +793,7 @@ export class EnhancedP2PMessageRouter {
       }
 
       console.log(
-        `[P2PRouter] File content received, fileName: ${response.data.data.fileName}`
+        `[P2PRouter] File content received, fileName: ${response.data.data.fileName}`,
       );
       return response.data.data;
     } catch (error) {
@@ -779,7 +813,7 @@ export class EnhancedP2PMessageRouter {
 
       throw new Error(
         "文件下载失败: " +
-        (error instanceof Error ? error.message : String(error))
+          (error instanceof Error ? error.message : String(error)),
       );
     }
   }
@@ -804,7 +838,7 @@ export class EnhancedP2PMessageRouter {
     } catch (error) {
       console.error(
         "[P2PRouter] Base64 to ArrayBuffer conversion failed:",
-        error
+        error,
       );
       throw new Error("文件内容格式错误，无法解码");
     }
@@ -852,7 +886,7 @@ export class EnhancedP2PMessageRouter {
       const decryptionResult = await e2eeService.decryptMessage(
         this.myUserId,
         data.senderId.toString(),
-        encryptedData
+        encryptedData,
       );
 
       if (!decryptionResult.success || !decryptionResult.content) {
@@ -861,13 +895,15 @@ export class EnhancedP2PMessageRouter {
       }
 
       // ✅ Handle Key Request
-      if (data.messageType === 'key_request') {
-        console.log('[P2PRouter] Handling decrypted KEY_REQUEST');
+      if (data.messageType === "key_request") {
+        console.log("[P2PRouter] Handling decrypted KEY_REQUEST");
         try {
           const requestPayload = JSON.parse(decryptionResult.content);
           const innerPayload = requestPayload.payload || requestPayload;
           this.triggerKeyRequestHandlers(innerPayload);
-        } catch (e) { console.error('Failed to handle key request', e); }
+        } catch (e) {
+          console.error("Failed to handle key request", e);
+        }
         return;
       }
 
@@ -875,7 +911,7 @@ export class EnhancedP2PMessageRouter {
       let messageContent = decryptionResult.content;
       let fileMetadata: any = {};
 
-      if (data.messageType === "file" || "contract") {
+      if (data.messageType === "file" || data.messageType === "contract") {
         try {
           const fileData = JSON.parse(decryptionResult.content);
           fileMetadata = {
@@ -909,11 +945,11 @@ export class EnhancedP2PMessageRouter {
         deliveryConfirmed: true,
         readConfirmed: false,
         metadata:
-          data.messageType === "file" || "contract"
+          data.messageType === "file" || data.messageType === "contract"
             ? fileMetadata
             : {
-              ...data.metadata,
-            },
+                ...data.metadata,
+              },
       };
 
       await this.persistence.saveMessage(message);
@@ -935,20 +971,20 @@ export class EnhancedP2PMessageRouter {
   async sendKeyDistribution(
     recipientId: string,
     keyDistMsg: ISenderKeyDistributionMessage,
-    orderId: string
+    orderId: string,
   ): Promise<IP2PRouterResponse> {
     const startTime = Date.now();
     const messageId = this.generateMessageId();
 
     try {
       console.log(
-        `[P2PRouter] Sending key distribution for order ${orderId} to ${recipientId}`
+        `[P2PRouter] Sending key distribution for order ${orderId} to ${recipientId}`,
       );
 
       // 1. 构建密钥分发消息内容
       const keyContent = {
-        type: 'KEY_DISTRIBUTION',
-        payload: keyDistMsg
+        type: "KEY_DISTRIBUTION",
+        payload: keyDistMsg,
       };
 
       // ✅ 确保 P2P 会话已建立
@@ -959,7 +995,7 @@ export class EnhancedP2PMessageRouter {
       const encryptionResult = await e2eeService.encryptMessage(
         this.myUserId,
         recipientId,
-        JSON.stringify(keyContent)
+        JSON.stringify(keyContent),
       );
 
       if (!encryptionResult.success) {
@@ -970,7 +1006,7 @@ export class EnhancedP2PMessageRouter {
       const sequence = await this.generateSequenceForOrder(orderId);
       const message = {
         id: messageId,
-        type: 'key_distribution' as const,
+        type: "key_distribution" as const,
         senderId: this.myUserId,
         recipientId: recipientId,
         orderId: orderId,
@@ -982,7 +1018,7 @@ export class EnhancedP2PMessageRouter {
 
       // 4. ✅ 通过 WebSocket 发送
       let sendSuccess = false;
-      let sendMethod = '';
+      let sendMethod = "";
 
       if (this.wsManager.isConnected()) {
         try {
@@ -991,14 +1027,14 @@ export class EnhancedP2PMessageRouter {
             orderId: orderId,
             recipientId: recipientId,
             encryptedContent: JSON.stringify(encryptionResult.ciphertext),
-            messageType: 'key_distribution',
+            messageType: "key_distribution",
             timestamp: message.timestamp,
             sequence: sequence,
             fileId: undefined,
           });
 
           sendSuccess = true;
-          sendMethod = 'websocket';
+          sendMethod = "websocket";
           console.log(`[P2PRouter] Key distribution sent via WebSocket`);
         } catch (error) {
           console.error(`[P2PRouter] WebSocket send failed:`, error);
@@ -1008,7 +1044,7 @@ export class EnhancedP2PMessageRouter {
       // 5. ✅ 如果 WebSocket 失败，使用 HTTP（可选）
       if (!sendSuccess) {
         // 这里可以添加 HTTP fallback 逻辑
-        throw new Error('密钥分发失败：WebSocket 不可用');
+        throw new Error("密钥分发失败：WebSocket 不可用");
       }
 
       return {
@@ -1018,11 +1054,11 @@ export class EnhancedP2PMessageRouter {
           orderId,
           recipientId,
           method: sendMethod,
-          keyType: 'sender_key_distribution'
+          keyType: "sender_key_distribution",
         },
         metadata: {
           timing: Date.now() - startTime,
-          messageType: 'key_distribution'
+          messageType: "key_distribution",
         },
       };
     } catch (error) {
@@ -1041,15 +1077,21 @@ export class EnhancedP2PMessageRouter {
    */
   public async handleKeyDistributionMessage(data: any): Promise<void> {
     try {
-      console.log('[P2PRouter] Received key distribution message');
+      console.log("[P2PRouter] Received key distribution message");
 
       // 1. 解密消息内容
       const encryptedData = JSON.parse(data.encryptedContent);
 
       // ✅ 修复：将 JSON 反序列化后的 Object 转换为 Uint8Array
       // 必须检查 typeof === 'object'，因为 string 也是有效的 body（binary string），不应该被转换
-      if (encryptedData.body && typeof encryptedData.body === 'object' && !(encryptedData.body instanceof Uint8Array)) {
-        console.log('[P2PRouter] Converting KeyDist body from Object to Uint8Array');
+      if (
+        encryptedData.body &&
+        typeof encryptedData.body === "object" &&
+        !(encryptedData.body instanceof Uint8Array)
+      ) {
+        console.log(
+          "[P2PRouter] Converting KeyDist body from Object to Uint8Array",
+        );
         const values = Object.values(encryptedData.body);
         encryptedData.body = new Uint8Array(values as number[]);
       }
@@ -1057,19 +1099,22 @@ export class EnhancedP2PMessageRouter {
       const decryptionResult = await e2eeService.decryptMessage(
         this.myUserId,
         data.senderId.toString(),
-        encryptedData
+        encryptedData,
       );
 
       if (!decryptionResult.success || !decryptionResult.content) {
-        console.error(`[P2PRouter] Key decryption failed:`, decryptionResult.error);
+        console.error(
+          `[P2PRouter] Key decryption failed:`,
+          decryptionResult.error,
+        );
         return;
       }
 
       // 2. 解析密钥内容
       const keyContent = JSON.parse(decryptionResult.content);
 
-      if (keyContent.type !== 'KEY_DISTRIBUTION') {
-        console.warn('[P2PRouter] Invalid key distribution message type');
+      if (keyContent.type !== "KEY_DISTRIBUTION") {
+        console.warn("[P2PRouter] Invalid key distribution message type");
         return;
       }
 
@@ -1077,28 +1122,29 @@ export class EnhancedP2PMessageRouter {
       this.triggerKeyDistributionHandlers({
         orderId: data.orderId,
         senderId: data.senderId.toString(),
-        keyDistributionMessage: keyContent.payload
+        keyDistributionMessage: keyContent.payload,
       });
 
-      console.log(`[P2PRouter] Key distribution processed for order ${data.orderId}`);
+      console.log(
+        `[P2PRouter] Key distribution processed for order ${data.orderId}`,
+      );
     } catch (error) {
-      console.error('[P2PRouter] Handle key distribution failed:', error);
+      console.error("[P2PRouter] Handle key distribution failed:", error);
     }
   }
 
   // ========== 回调管理 ==========
 
-
-
   /**
    * 同步订单的离线消息
    */
   async syncOrderOfflineMessages(
-    orderId?: string
+    orderId?: string,
   ): Promise<{ success: boolean; newMessages: number }> {
     console.log(
-      `[P2PRouter] Syncing offline messages${orderId ? ` for order ${orderId}` : ""
-      }`
+      `[P2PRouter] Syncing offline messages${
+        orderId ? ` for order ${orderId}` : ""
+      }`,
     );
 
     const result = await this.syncService.syncOfflineMessages();
@@ -1122,11 +1168,12 @@ export class EnhancedP2PMessageRouter {
    * 重试发送失败的订单消息
    */
   async retryPendingOrderMessages(
-    orderId?: string
+    orderId?: string,
   ): Promise<{ success: boolean; sentCount: number }> {
     console.log(
-      `[P2PRouter] Retrying pending messages${orderId ? ` for order ${orderId}` : ""
-      }`
+      `[P2PRouter] Retrying pending messages${
+        orderId ? ` for order ${orderId}` : ""
+      }`,
     );
     return await this.syncService.retrySendingPendingMessages(orderId);
   }
@@ -1144,12 +1191,12 @@ export class EnhancedP2PMessageRouter {
   async getOrderHistory(
     orderId: string,
     limit: number = 50,
-    beforeTimestamp?: number
+    beforeTimestamp?: number,
   ): Promise<P2PMessage[]> {
     return await this.persistence.getOrderMessages(
       orderId,
       limit,
-      beforeTimestamp
+      beforeTimestamp,
     );
   }
 
@@ -1197,7 +1244,7 @@ export class EnhancedP2PMessageRouter {
   }
 
   private triggerKeyRequestHandlers(data: any): void {
-    this.keyRequestHandlers.forEach(handler => handler(data));
+    this.keyRequestHandlers.forEach((handler) => handler(data));
   }
 
   onKeyDistribution(callback: (data: any) => void): void {
@@ -1205,37 +1252,43 @@ export class EnhancedP2PMessageRouter {
 
     // Replay pending messages
     if (this.pendingKeyDistributions.length > 0) {
-      console.log(`[P2PRouter] Replaying ${this.pendingKeyDistributions.length} pending key distributions`);
-      this.pendingKeyDistributions.forEach(data => callback(data));
+      console.log(
+        `[P2PRouter] Replaying ${this.pendingKeyDistributions.length} pending key distributions`,
+      );
+      this.pendingKeyDistributions.forEach((data) => callback(data));
       this.pendingKeyDistributions = [];
     }
   }
 
   // ✅ Used internally to dispatch key messages
-  private triggerKeyDistributionHandlers(data: { orderId: string, senderId: string, keyDistributionMessage: any }): void {
+  private triggerKeyDistributionHandlers(data: {
+    orderId: string;
+    senderId: string;
+    keyDistributionMessage: any;
+  }): void {
     if (this.keyDistributionHandlers.length === 0) {
-      console.log(`[P2PRouter] No key distribution handlers yet, buffering message from ${data.senderId}`);
+      console.log(
+        `[P2PRouter] No key distribution handlers yet, buffering message from ${data.senderId}`,
+      );
       this.pendingKeyDistributions.push(data);
     } else {
-      this.keyDistributionHandlers.forEach(handler => handler(data));
+      this.keyDistributionHandlers.forEach((handler) => handler(data));
     }
   }
 
   onFileUploadProgress(
     fileId: string,
-    callback: (progress: any) => void
+    callback: (progress: any) => void,
   ): void {
     this.uploadProgressCallbacks.set(fileId, callback);
   }
 
   onFileDownloadProgress(
     fileId: string,
-    callback: (progress: number, total: number) => void
+    callback: (progress: number, total: number) => void,
   ): void {
     this.downloadProgressCallbacks.set(fileId, callback);
   }
-
-
 
   // ========== 其他公共方法 ==========
 
@@ -1304,7 +1357,7 @@ export class EnhancedP2PMessageRouter {
     this.wsManager.onStatusChange(async (status) => {
       if (status === "connected") {
         console.log(
-          "[P2PRouter] Connected, backend will auto push offline messages"
+          "[P2PRouter] Connected, backend will auto push offline messages",
         );
 
         // ✅ 只需要重试本地的待发送消息
@@ -1463,7 +1516,7 @@ export class EnhancedP2PMessageRouter {
     encryptedContent: ArrayBuffer,
     originalFileName: string,
     orderId: string,
-    frontendFileId: string
+    frontendFileId: string,
   ): Promise<number> {
     const progressCallback = this.uploadProgressCallbacks.get(frontendFileId);
 
@@ -1481,7 +1534,7 @@ export class EnhancedP2PMessageRouter {
       formData.append("orderId", orderId);
 
       console.log(
-        `[P2PRouter] Uploading encrypted file to server: ${uploadFileName}`
+        `[P2PRouter] Uploading encrypted file to server: ${uploadFileName}`,
       );
 
       const response = await this.fileApiClient.post<{
@@ -1495,7 +1548,7 @@ export class EnhancedP2PMessageRouter {
         onUploadProgress: (progressEvent) => {
           if (progressEvent.total && progressCallback) {
             const percentCompleted = Math.round(
-              (progressEvent.loaded * 100) / progressEvent.total
+              (progressEvent.loaded * 100) / progressEvent.total,
             );
 
             progressCallback({
@@ -1516,14 +1569,14 @@ export class EnhancedP2PMessageRouter {
       }
 
       console.log(
-        `[P2PRouter] Upload success, backend fileId: ${response.data.data}`
+        `[P2PRouter] Upload success, backend fileId: ${response.data.data}`,
       );
       return response.data.data;
     } catch (error) {
       // 错误处理保持不变
       throw new Error(
         "文件上传失败: " +
-        (error instanceof Error ? error.message : String(error))
+          (error instanceof Error ? error.message : String(error)),
       );
     }
   }
@@ -1560,7 +1613,7 @@ export class EnhancedP2PMessageRouter {
   private async downloadFileFromServer(
     url: string,
     _fileId: string,
-    progressCallback?: (loaded: number, total: number) => void
+    progressCallback?: (loaded: number, total: number) => void,
   ): Promise<ArrayBuffer> {
     try {
       console.log(`[P2PRouter] Downloading from: ${url}`);
@@ -1570,7 +1623,7 @@ export class EnhancedP2PMessageRouter {
         onDownloadProgress: (progressEvent) => {
           if (progressEvent.total && progressCallback) {
             const percentCompleted = Math.round(
-              (progressEvent.loaded * 100) / progressEvent.total
+              (progressEvent.loaded * 100) / progressEvent.total,
             );
 
             progressCallback(progressEvent.loaded, progressEvent.total);
@@ -1581,7 +1634,7 @@ export class EnhancedP2PMessageRouter {
       });
 
       console.log(
-        `[P2PRouter] Download success: ${response.data.byteLength} bytes`
+        `[P2PRouter] Download success: ${response.data.byteLength} bytes`,
       );
       return response.data;
     } catch (error) {
@@ -1601,7 +1654,7 @@ export class EnhancedP2PMessageRouter {
 
       throw new Error(
         "文件下载失败: " +
-        (error instanceof Error ? error.message : String(error))
+          (error instanceof Error ? error.message : String(error)),
       );
     }
   }
@@ -1619,20 +1672,20 @@ export class EnhancedP2PMessageRouter {
       // 从本地存储获取最新消息来确定下一个序列号
       const latestMessages = await this.persistence.getOrderMessages(
         orderId,
-        1
+        1,
       );
       if (latestMessages.length === 0) {
         return 1; // 第一条消息
       }
 
       const latestSequence = Math.max(
-        ...latestMessages.map((msg) => msg.sequence || 0)
+        ...latestMessages.map((msg) => msg.sequence || 0),
       );
       return latestSequence + 1;
     } catch (error) {
       console.error(
         `[P2PRouter] Generate sequence for order ${orderId} error:`,
-        error
+        error,
       );
       return Date.now(); // 降级方案
     }

@@ -1,6 +1,6 @@
 // router/index.ts
 
-import { createRouter, createWebHistory } from "vue-router";
+import { createRouter, createWebHashHistory } from "vue-router";
 import { useAuthStore } from "../modulse/auth/services/auth.store";
 import { useOrderStore } from "../modulse/orders/store/order.store";
 
@@ -70,7 +70,7 @@ const contractRoutes = [
 ];
 
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: createWebHashHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: "/",

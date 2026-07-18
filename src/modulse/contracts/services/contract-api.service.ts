@@ -139,6 +139,28 @@ export class ContractApiService {
   }
 
   /**
+   * 通过 POST 请求获取文件的 Base64 内容
+   */
+  async downloadFileContentBase64(fileId: number): Promise<{ fileName: string; fileContent: string } | null> {
+    try {
+      const response = await this.apiClient.post<{
+        code: number;
+        msg: string;
+        data: { fileName: string; fileContent: string };
+      }>("/file/download", { fileId });
+
+      if (response.data.code === 1) {
+        return response.data.data;
+      }
+      console.error("获取文件内容失败", response.data.msg);
+      return null;
+    } catch (error) {
+      console.error("获取文件内容异常", error);
+      return null;
+    }
+  }
+
+  /**
    * 下载二进制文件
    * @param url 文件下载链接
    * @returns ArrayBuffer 或 null

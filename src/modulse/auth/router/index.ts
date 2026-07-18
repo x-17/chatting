@@ -20,6 +20,15 @@ export const authRoutes = [
     },
   },
   {
+    path: "/auth/shangjiao/callback",
+    name: "ShangjiaoCallback",
+    component: () => import("../views/ShangjiaoCallback.vue"),
+    meta: {
+      requiresAuth: false,
+      title: "安全验证中",
+    },
+  },
+  {
     path: "/mocksso",
     name: "SsoSimulator",
     component: () => import("../views/SsoSimulator.vue"),

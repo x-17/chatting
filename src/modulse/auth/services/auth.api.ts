@@ -19,6 +19,24 @@ class AuthApiService {
   }
 
   /**
+   * 使用上交 Ticket 登录
+   */
+  async loginByTicket(ticket: string, orderId: string, parentOrderId?: string) {
+    const requestData: any = {
+      ticket,
+      orderId,
+    };
+    if (parentOrderId) {
+      requestData.parentOrderId = parentOrderId;
+    }
+    const response = await this.apiClient.post(
+      "/user/loginByTicket",
+      requestData
+    );
+    return response.data;
+  }
+
+  /**
    * 注册用户密钥
    */
   async registerUserKeys(publicKeys: E2eePublicKeySet, userinfo: User) {
