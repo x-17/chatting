@@ -2,6 +2,14 @@
 import { createAuthenticatedApiClient } from "../../utils/api-client";
 import type { E2eePublicKeySet, User } from "../types";
 
+export interface KeyFingerprintVerificationPayload {
+  identityKeyFingerprint: string;
+  signedPreKeyPublicKeyFingerprint: string;
+  preKeyPublicKeyFingerprint: string;
+  signingPubKeyFingerprint: string;
+  clientVersion?: string;
+}
+
 class AuthApiService {
   private apiClient = createAuthenticatedApiClient();
   /**
@@ -32,6 +40,18 @@ class AuthApiService {
     const response = await this.apiClient.post(
       "/user/loginByTicket",
       requestData
+    );
+    return response.data;
+  }
+
+  /**
+   * 校验当前设备保存的密钥指纹是否与服务端注册公钥一致。
+   * token 由 apiClient 的请求拦截器自动添加。
+   */
+  async verifyKeyFingerprints(payload: KeyFingerprintVerificationPayload) {
+    const response = await this.apiClient.post(
+      "/user/verifyKeyFingerprints",
+      payload,
     );
     return response.data;
   }

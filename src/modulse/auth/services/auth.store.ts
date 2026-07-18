@@ -102,7 +102,7 @@ export const useAuthStore = defineStore("auth", {
   },
 
   actions: {
-    initializeAuth() {
+    async initializeAuth() {
       try {
         // ✅ 从 sessionStorage 读取当前标签页的用户ID（隔离）
         const currentUserId = sessionStorage.getItem("auth_current_user_id");
@@ -156,6 +156,10 @@ export const useAuthStore = defineStore("auth", {
           this.currentUserId = currentUserId;
           const session = this.users.get(currentUserId)!;
           this.setAxiosToken(session.token);
+          this.status = "loading";
+          if (!(await this.verifyCurrentUserKeyFingerprints(currentUserId))) {
+            return;
+          }
           this.status = "success";
           this.updateActivity();
 
@@ -260,7 +264,7 @@ export const useAuthStore = defineStore("auth", {
         );
 
         if (response.code === 1) {
-          return this.handleExistingUser(response.data);
+          return await this.handleExistingUser(response.data);
         }
 
         throw new Error(response.msg || "登录失败");
@@ -306,7 +310,7 @@ export const useAuthStore = defineStore("auth", {
         );
 
         if (registerRes.code === 1) {
-          return this.handleExistingUser(registerRes.data);
+          return await this.handleExistingUser(registerRes.data);
         }
 
         throw new Error(registerRes.msg || "账号注册失败");
@@ -334,7 +338,7 @@ export const useAuthStore = defineStore("auth", {
         );
 
         if (response.code === 1) {
-          return this.handleExistingUser(response.data);
+          return await this.handleExistingUser(response.data);
         }
 
         if (response.code === 0 && response.data?.tenantId) {
@@ -366,7 +370,7 @@ export const useAuthStore = defineStore("auth", {
         );
 
         if (response.code === 1) {
-          return this.handleExistingUser(response.data);
+          return await this.handleExistingUser(response.data);
         }
 
         if (response.code === 0 && response.data?.tenantId) {
@@ -384,7 +388,7 @@ export const useAuthStore = defineStore("auth", {
     /**
      * ✅ 处理已存在用户
      */
-    handleExistingUser(data: any): boolean {
+    async handleExistingUser(data: any): Promise<boolean> {
       const userId = String(data.userInfo.tenantId);
       const session: UserSession = {
         user: data.userInfo,
@@ -404,6 +408,12 @@ export const useAuthStore = defineStore("auth", {
 
       // 设置 axios token
       this.setAxiosToken(data.token);
+
+      this.status = "loading";
+      if (!(await this.verifyCurrentUserKeyFingerprints(userId))) {
+        return false;
+      }
+
       this.status = "success";
 
       console.log(`[Auth] User ${userId} logged in successfully in this tab`);
@@ -433,23 +443,7 @@ export const useAuthStore = defineStore("auth", {
         );
 
         if (registerRes.code === 1) {
-          const userId = registerRes.data.userInfo.tenantId;
-          const session: UserSession = {
-            user: registerRes.data.userInfo,
-            token: registerRes.data.token,
-            lastActivity: Date.now(),
-            loginTimestamp: Date.now(),
-          };
-
-          this.users.set(userId, session);
-          this.setCurrentUser(userId);
-          this.saveUserSession(userId, session);
-
-          this.setAxiosToken(registerRes.data.token);
-          this.status = "success";
-
-          console.log(`[Auth] New user ${userId} registered in this tab`);
-          return true;
+          return await this.handleExistingUser(registerRes.data);
         } else {
           throw new Error(registerRes.msg || "注册失败");
         }
@@ -461,6 +455,45 @@ export const useAuthStore = defineStore("auth", {
         }
         throw error;
       }
+    },
+
+    /**
+     * 登录成功后、建立会话前校验当前设备保存的公钥指纹。
+     * 校验失败时仅清理认证会话，不删除 IndexedDB 中的本地密钥，便于用户排查或恢复。
+     */
+    async verifyCurrentUserKeyFingerprints(userId: string): Promise<boolean> {
+      try {
+        const payload = await e2eeService.getStoredKeyFingerprints(userId);
+        const response = await this.withTimeout(
+          authApiService.verifyKeyFingerprints({
+            ...payload,
+            clientVersion: "signalchat-web",
+          }),
+          CONFIG.REQUEST_TIMEOUT,
+        );
+
+        if (response.code === 1 && response.data?.verified === true) {
+          return true;
+        }
+
+        if (response.data?.verified === false) {
+          console.warn("[Auth] Local key fingerprint mismatch:", response.data.mismatchedKeyFields);
+          this.errorMessage =
+            "本地密钥验证失败，无法建立安全通信。请勿继续发起会话；请确认未清理、迁移或修改浏览器本地密钥，必要时联系管理员处理。";
+        } else {
+          this.errorMessage = "密钥验证失败，无法确认本地密钥是否可信，请稍后重试。";
+        }
+      } catch (error) {
+        console.error("[Auth] Key fingerprint verification request failed:", error);
+        this.errorMessage =
+          error instanceof Error && error.message.includes("本地密钥")
+            ? error.message
+            : "密钥验证服务不可用，无法建立安全通信，请稍后重试。";
+      }
+
+      this.removeUserSession(userId);
+      this.status = "error";
+      return false;
     },
 
     handleAuthError(error: any): boolean {

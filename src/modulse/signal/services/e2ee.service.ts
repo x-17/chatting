@@ -20,6 +20,14 @@ import { createAuthenticatedApiClient } from "../../utils/api-client";
 // 创建用于存储身份的 IndexedDB store
 const identityDbStore = createStore("e2ee-identity-store", "identities");
 
+async function sha256Hex(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 // ========== 新增：简单的异步锁 ==========
 class AsyncLock {
   private promise: Promise<void> = Promise.resolve();
@@ -225,6 +233,36 @@ export const e2eeService = {
       console.error(`[E2EE] Error checking keys for ${userId}:`, error);
       return false;
     }
+  },
+
+  /**
+   * 读取当前设备已保存的公钥字符串并计算指纹。
+   * 公钥字符串必须保持注册时上传的 Base64 形式，不能重新编码后再参与摘要。
+   */
+  async getStoredKeyFingerprints(userId: string): Promise<{
+    identityKeyFingerprint: string;
+    signedPreKeyPublicKeyFingerprint: string;
+    preKeyPublicKeyFingerprint: string;
+    signingPubKeyFingerprint: string;
+  }> {
+    const identity = await idbGet<StorableIdentity>(userId, identityDbStore);
+    const preKey = identity?.oneTimePreKeys?.[0];
+
+    if (
+      !identity?.identityKeyPair?.pubKey ||
+      !identity.signedPreKey?.pubKey ||
+      !preKey?.pubKey ||
+      !identity.signingKeyPair?.pubKey
+    ) {
+      throw new Error("本地密钥信息不完整，无法完成密钥验证");
+    }
+
+    return {
+      identityKeyFingerprint: await sha256Hex(identity.identityKeyPair.pubKey),
+      signedPreKeyPublicKeyFingerprint: await sha256Hex(identity.signedPreKey.pubKey),
+      preKeyPublicKeyFingerprint: await sha256Hex(preKey.pubKey),
+      signingPubKeyFingerprint: await sha256Hex(identity.signingKeyPair.pubKey),
+    };
   },
 
   /**

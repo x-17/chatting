@@ -224,6 +224,7 @@ const handleRouteParams = () => {
 // 获取错误原因文本
 const getReasonText = (reason: string): string => {
   const reasonMap: Record<string, string> = {
+    "key-verification": "本地密钥验证失败，无法建立安全通信。请确认未清理、迁移或修改浏览器本地密钥，必要时联系管理员处理。",
     expired: "您的登录会话已过期，为保障安全需要重新登录",
     error: "系统检测到异常，建议重新登录以确保安全",
     logout: "您已成功登出系统",

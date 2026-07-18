@@ -19,7 +19,7 @@
           <div class="card-header">
             <div class="logo-section">
               <div class="logo-icon">🔐</div>
-              <span class="system-title">安全磋商系统</span>
+              <span class="system-title">安全交易系统</span>
             </div>
             <div class="subtitle">基于端到端加密的安全通信平台</div>
           </div>

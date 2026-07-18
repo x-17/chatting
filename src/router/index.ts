@@ -94,12 +94,21 @@ const router = createRouter({
 /**
  * 全局前置导航守卫
  */
-router.beforeEach(async (to, from, next) => {
+router.beforeEach(async (to, _from, next) => {
   console.log(`[Router] Navigating to: ${to.name as string}`);
 
   const authStore = useAuthStore();
-  if (!authStore.isAuthenticated) {
-    authStore.initializeAuth();
+  const requiresAuth = to.matched.some((record) => record.meta.requiresAuth);
+  if (requiresAuth && !authStore.isAuthenticated) {
+    await authStore.initializeAuth();
+  }
+
+  if (requiresAuth && !authStore.isAuthenticated) {
+    next({
+      name: "Login",
+      query: authStore.errorMessage ? { reason: "key-verification" } : undefined,
+    });
+    return;
   }
 
   next(); // 直接放行所有路由
