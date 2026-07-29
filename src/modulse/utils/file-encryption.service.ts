@@ -202,6 +202,9 @@ export const fileEncryptionService = {
 
             const calculatedChecksum = await this.calculateChecksum(decryptedContent);
             const isContentValid = calculatedChecksum === metadata.checksum;
+            if (!isContentValid) {
+                throw new Error("\u6587\u4ef6\u5b8c\u6574\u6027\u6821\u9a8c\u5931\u8d25");
+            }
 
             return {
                 originalName: metadata.originalName,
@@ -249,6 +252,9 @@ export const fileEncryptionService = {
             // 验证完整性
             const calculatedChecksum = await this.calculateChecksum(decryptedContent);
             const isContentValid = calculatedChecksum === metadata.checksum;
+            if (!isContentValid) {
+                throw new Error("\u6587\u4ef6\u5b8c\u6574\u6027\u6821\u9a8c\u5931\u8d25");
+            }
 
             return {
                 originalName: metadata.originalName,
@@ -341,7 +347,7 @@ export const fileEncryptionService = {
         key: Uint8Array,
         _iv: Uint8Array
     ): Promise<ArrayBuffer> {
-        const decryptedChunks: ArrayBuffer[] = [];
+        const decryptedChunks: Uint8Array[] = [];
         const encryptedChunkSize = CHUNK_SIZE + 24 + 16;
         const totalChunks = Math.ceil(encryptedContent.byteLength / encryptedChunkSize);
 
@@ -352,9 +358,12 @@ export const fileEncryptionService = {
 
             const decryptedChunk = cryptoHelper.decrypt(key, new Uint8Array(encryptedChunk));
             if (!decryptedChunk) {
-                throw new Error(`解密第${i + 1}块失败`);
+                throw new Error(`\u89e3\u5bc6\u7b2c${i + 1}\u5757\u5931\u8d25`);
             }
-            decryptedChunks.push(decryptedChunk.buffer);
+
+            // tweetnacl may return a view with a non-zero byteOffset. Keep the
+            // Uint8Array view itself instead of its larger backing buffer.
+            decryptedChunks.push(decryptedChunk);
         }
 
         const totalSize = decryptedChunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
@@ -363,7 +372,7 @@ export const fileEncryptionService = {
 
         let offset = 0;
         for (const chunk of decryptedChunks) {
-            resultView.set(new Uint8Array(chunk), offset);
+            resultView.set(chunk, offset);
             offset += chunk.byteLength;
         }
 

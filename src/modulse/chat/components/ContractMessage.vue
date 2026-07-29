@@ -140,12 +140,17 @@ const contractService = new ContractService(
   ""
 );
 
-const currentUserInitial = computed(
-  () => authStore.user?.userName.charAt(0).toUpperCase() || "U"
+function getInitial(value: unknown, fallback = "U"): string {
+  const normalized = String(value ?? "").trim();
+  return normalized ? normalized.charAt(0).toUpperCase() : fallback;
+}
+
+const currentUserInitial = computed(() =>
+  getInitial(authStore.user?.userName)
 );
 
 const senderInitial = computed(() =>
-  props.message.senderId.charAt(0).toUpperCase()
+  getInitial(props.message.senderId)
 );
 
 const fileName = computed(() => props.message.metadata?.fileName || "未知文件");

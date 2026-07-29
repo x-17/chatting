@@ -199,18 +199,22 @@ export function useMessageHandlers(activeOrderIdRef?: Ref<string | null>) {
     console.log("[MessageHandlers] Received P2P message:", message.id);
 
     // 找到对应的订单/会话
-    const order = orderStore.getOrderById(message.orderId);
-
-    if (!order) {
-      console.warn("[MessageHandlers] Order not found for P2P message:", message.orderId);
-      return;
-    }
-
-    // 添加到会话
-    addMessageToConversation(order.orderId, {
+    // Render the real-time message before optional order metadata is available.
+    const conversationId = String(message.orderId);
+    addMessageToConversation(conversationId, {
       ...message,
+      orderId: conversationId,
       __conversationType: "p2p",
     } as any);
+
+    const order = orderStore.getOrderById(conversationId);
+    if (!order) {
+      console.warn(
+        "[MessageHandlers] Order not found for P2P message, message has still been rendered:",
+        conversationId,
+      );
+      return;
+    }
 
     // 检查是否是当前活动订单
     const isActive = activeOrderIdRef?.value === order.orderId;
@@ -242,19 +246,27 @@ export function useMessageHandlers(activeOrderIdRef?: Ref<string | null>) {
 
     // 找到对应的订单/会话
     // GroupMessage 应该也有 orderId，或者 groupId 就是 orderId
-    const orderId = (message as any).orderId || (message as any).groupId;
-    const order = orderStore.getOrderById(orderId);
-
-    if (!order) {
-      console.warn("[MessageHandlers] Order not found for group message:", orderId);
+    const rawOrderId = (message as any).orderId || (message as any).groupId;
+    if (rawOrderId === undefined || rawOrderId === null) {
+      console.warn("[MessageHandlers] Missing order/group id for group message");
       return;
     }
 
-    // 添加到会话
-    addMessageToConversation(order.orderId, {
+    const orderId = String(rawOrderId);
+    addMessageToConversation(orderId, {
       ...message,
+      orderId,
       __conversationType: "group",
     } as any);
+
+    const order = orderStore.getOrderById(orderId);
+    if (!order) {
+      console.warn(
+        "[MessageHandlers] Order not found for group message, message has still been rendered:",
+        orderId,
+      );
+      return;
+    }
 
     // 检查是否是当前活动订单
     const isActive = activeOrderIdRef?.value === order.orderId;

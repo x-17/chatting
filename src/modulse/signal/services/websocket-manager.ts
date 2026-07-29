@@ -322,7 +322,8 @@ export class WebSocketManager {
   // ========== 私有方法 ==========
 
   private buildWebSocketUrl(): string {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    // const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const protocol = "wss:";
     const host = import.meta.env.VITE_WS_URL || window.location.host;
     const token = this.getAuthToken();
     return `${protocol}//${host}/chat?token=${token}`;

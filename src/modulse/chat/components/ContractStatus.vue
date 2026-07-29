@@ -72,7 +72,7 @@ import { ContractApiService } from "../../contracts/services/contract-api.servic
 interface Props {
   visible: boolean; // 控制弹窗显示
   userId: string; // 订单ID，用于查询合同
-  contractInfo: orderSignState; // 当前用户ID
+  contractInfo: orderSignState | null; // 当前用户ID
 }
 
 const props = defineProps<Props>();
@@ -90,6 +90,7 @@ const contractService = new ContractApiService();
 
 // 计算属性：合同状态文本和样式
 const statusText = computed(() => {
+  // if (props.contractInfo === null) return "无合同";
   return props.contractInfo?.status === 1 ? "已签署" : "一方签署";
 });
 

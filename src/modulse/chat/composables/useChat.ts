@@ -257,6 +257,9 @@ export function useChat() {
           fileName: file.name,
           fileSize: file.size,
           mimeType: file.type,
+          previewUrl: file.type.startsWith("image/")
+            ? URL.createObjectURL(file)
+            : undefined,
         },
         __conversationType: order.conversationType,
       };
@@ -267,15 +270,23 @@ export function useChat() {
       let res;
       if (order.conversationType === "group") {
         try {
-          const groupMsg =
-            await getGroupRouter().sendGroupFileMessage(
-              order.conversationId,
-              file,
-            );
+          const groupMsg = await getGroupRouter().sendGroupFileMessage(
+            order.conversationId,
+            file,
+          );
 
           // Adapting GroupMessage to ChatMessage
           const adaptedMsg: ChatMessage = {
             ...groupMsg,
+            metadata: {
+              ...groupMsg.metadata,
+              fileName: groupMsg.metadata?.fileName || file.name,
+              fileSize: groupMsg.metadata?.fileSize || file.size,
+              mimeType: groupMsg.metadata?.mimeType || file.type,
+              previewUrl: file.type.startsWith("image/")
+                ? URL.createObjectURL(file)
+                : undefined,
+            },
             __conversationType: "group",
           } as any;
 
@@ -310,6 +321,9 @@ export function useChat() {
             fileName: file.name,
             fileSize: file.size,
             mimeType: file.type,
+            previewUrl: file.type.startsWith("image/")
+              ? URL.createObjectURL(file)
+              : undefined,
           },
           __conversationType: order.conversationType,
         };
@@ -338,6 +352,26 @@ export function useChat() {
       .toString(36)
       .substring(2, 9)}`;
     const myUserId = getMyUserId();
+    if (mockService.enabled) {
+      const optimisticMessage: ChatMessage = {
+        id: messageId,
+        type: "contract",
+        senderId: "123456",
+        orderId: order.id, // Keeping orderId for compatibility
+        content: `[文件] ${file.name}`,
+        timestamp: Date.now(),
+        status: "sent",
+        metadata: {
+          fileName: file.name,
+          fileSize: file.size,
+          mimeType: file.type,
+        },
+        __conversationType: order.conversationType,
+      };
+      addMessageToConversation(order.conversationId, optimisticMessage);
+      console.log("[useChat] File sent (mock)");
+      return optimisticMessage;
+    }
 
     let ContractServiceInstance = new ContractService(myUserId);
     let res = await getP2PRouter().sendFile(
@@ -384,7 +418,7 @@ export function useChat() {
     const { e2eeService } = await import("../../signal/services/e2ee.service");
     const signature = await e2eeService.signContract(
       myUserId,
-      new Uint8Array(fileBuffer)
+      new Uint8Array(fileBuffer),
     );
 
     const contract_res = await ContractServiceInstance.uploadOrderQuote({
@@ -416,6 +450,7 @@ export function useChat() {
     if (message.__conversationType === "group" || message.groupId) {
       return await getGroupRouter().downloadGroupFile(
         message as GroupMessage,
+        triggerDownload,
       );
     }
 
@@ -426,7 +461,7 @@ export function useChat() {
         triggerDownload,
       );
     } else {
-      res = await getP2PRouter().downloadOrderFile(message);
+      res = await getP2PRouter().downloadOrderFile(message, triggerDownload);
     }
 
     if (!res.success || res.error) {
@@ -575,8 +610,12 @@ export function useChat() {
   }
 
   return {
-    get EnhancedP2PMessageRouterInstance() { return getP2PRouter(); },
-    get GroupMessageRouterInstance() { return getGroupRouter(); },
+    get EnhancedP2PMessageRouterInstance() {
+      return getP2PRouter();
+    },
+    get GroupMessageRouterInstance() {
+      return getGroupRouter();
+    },
     currentMessages,
     messagesLoading,
     downLoadFile,

@@ -8,7 +8,10 @@
         <div class="header-info">
           <h3>{{ order.otherParty.name }}</h3>
           <div class="order-meta">
-            <el-tag :type="order.type === 'purchase' ? 'primary' : 'success'" size="small">
+            <el-tag
+              :type="order.type === 'purchase' ? 'primary' : 'success'"
+              size="small"
+            >
               {{ order.type === "purchase" ? "我购买" : "我出售" }}
             </el-tag>
             <span class="order-id">订单 #{{ order.id.slice(-8) }}</span>
@@ -28,7 +31,11 @@
     </div>
 
     <!-- 消息列表 -->
-    <el-scrollbar ref="scrollbarRef" class="message-list" @scroll="handleScroll">
+    <el-scrollbar
+      ref="scrollbarRef"
+      class="message-list"
+      @scroll="handleScroll"
+    >
       <!-- 加载更多提示 -->
       <div v-if="loading" class="load-more">
         <el-icon class="is-loading">
@@ -44,23 +51,39 @@
           <SystemMessage v-if="message.type === 'system'" :message="message" />
 
           <!-- 文件消息 -->
-          <FileMessage v-else-if="
-            message.type === 'file' ||
-            message.type === 'image'
-          " :message="message" :is-mine="String(message.senderId) === currentUserId" @download="handleDownloadFile" />
-          <ContractMessage v-else-if="message.type === 'contract'" :message="message"
-            :is-mine="String(message.senderId) === currentUserId" @trigger-contract="handleContract"
-            @preview="handlePreviewFile" @download="handleDownloadFile" />
+          <FileMessage
+            v-else-if="message.type === 'file' || message.type === 'image'"
+            :message="message"
+            :is-mine="String(message.senderId) === currentUserId"
+            :preview-loader="props.loadImagePreview"
+            @download="handleDownloadFile"
+          />
+          <ContractMessage
+            v-else-if="message.type === 'contract'"
+            :message="message"
+            :is-mine="String(message.senderId) === currentUserId"
+            @trigger-contract="handleContract"
+            @preview="handlePreviewFile"
+            @download="handleDownloadFile"
+          />
 
           <!-- 文本消息 -->
-          <MessageBubble v-else :message="message" :is-mine="String(message.senderId) === currentUserId"
-            :show-sender="isGroupChat" />
+          <MessageBubble
+            v-else
+            :message="message"
+            :is-mine="String(message.senderId) === currentUserId"
+            :show-sender="isGroupChat"
+          />
         </template>
       </div>
 
       <!-- 滚动到底部按钮 -->
       <transition name="fade">
-        <div v-if="showScrollToBottom" class="scroll-to-bottom" @click="scrollToBottom">
+        <div
+          v-if="showScrollToBottom"
+          class="scroll-to-bottom"
+          @click="scrollToBottom"
+        >
           <el-icon>
             <ArrowDown />
           </el-icon>
@@ -68,13 +91,25 @@
       </transition>
     </el-scrollbar>
     <!-- 引入合同状态弹窗 -->
-    <ContractStatus v-model:visible="isContractDialogVisible" :user-id="String(currentUserId)"
-      :contract-info="contractInfo" @trigger-query-contract="querycontract" />
+    <ContractStatus
+      v-model:visible="isContractDialogVisible"
+      :user-id="String(currentUserId)"
+      :contract-info="contractInfo"
+      @trigger-query-contract="querycontract"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, reactive, onBeforeUpdate } from "vue";
+import {
+  ref,
+  computed,
+  watch,
+  nextTick,
+  onMounted,
+  reactive,
+  onBeforeUpdate,
+} from "vue";
 import { Document, Loading, ArrowDown } from "@element-plus/icons-vue";
 import { useAuthStore } from "../../auth/services/auth.store";
 import MessageBubble from "./MessageBubble.vue";
@@ -94,6 +129,7 @@ interface Props {
   order: Order;
   messages: ChatMessage[];
   loading?: boolean;
+  loadImagePreview?: (message: ChatMessage) => Promise<string>;
 }
 
 interface Emits {
@@ -113,15 +149,21 @@ const contractNum = ref(0);
 // const contractInfo = ref<orderSignState>(null);
 const contractInfo = ref<orderSignState>();
 
-const currentUserId = computed(() => String(authStore.currentUserId || sessionStorage.getItem("auth_current_user_id") || ""));
+const currentUserId = computed(() =>
+  String(
+    authStore.currentUserId ||
+      sessionStorage.getItem("auth_current_user_id") ||
+      "",
+  ),
+);
 const otherPartyInitial = computed(() =>
-  props.order.otherParty.name.charAt(0).toUpperCase()
+  props.order.otherParty.name.charAt(0).toUpperCase(),
 );
 const isGroupChat = computed(() => props.order.conversationType === "group");
 const ContractServiceInstance = new ContractService(
   authStore.currentUserId ||
-  sessionStorage.getItem("auth_current_user_id") ||
-  ""
+    sessionStorage.getItem("auth_current_user_id") ||
+    "",
 );
 const isContractDialogVisible = ref(false);
 
@@ -133,7 +175,7 @@ watch(
     if (!showScrollToBottom.value) {
       scrollToBottom(false);
     }
-  }
+  },
 );
 
 function handleScroll({ scrollTop }: { scrollTop: number }) {
@@ -188,7 +230,7 @@ async function querycontract() {
       }
     } else {
       console.log(res.data);
-      contractInfo.value = {} as orderSignState;
+      contractInfo.value = null as orderSignState;
       contractNum.value = 0;
       // ElMessage.error(res.data as string);
     }
@@ -197,9 +239,12 @@ async function querycontract() {
     // ElMessage.error("查询合同状态失败");
   }
 }
-watch(() => props.order.id, () => {
-  querycontract();
-})
+watch(
+  () => props.order.id,
+  () => {
+    querycontract();
+  },
+);
 </script>
 
 <style scoped>

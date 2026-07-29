@@ -246,7 +246,10 @@ export class GroupMessageRouter {
     /**
      * 下载并解密群组文件
      */
-    public async downloadGroupFile(message: GroupMessage): Promise<string> {
+    public async downloadGroupFile(
+        message: GroupMessage,
+        triggerDownload: boolean = true
+    ): Promise<string> {
         try {
             if (message.type !== 'file') throw new Error('Not a file message');
 
@@ -269,11 +272,25 @@ export class GroupMessageRouter {
                 message.senderId
             );
 
-            return fileEncryptionService.createDownloadUrl(
+            const downloadUrl = fileEncryptionService.createDownloadUrl(
                 result.content,
                 result.originalName,
                 result.mimeType
             );
+
+            if (triggerDownload) {
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = result.originalName;
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+            }
+
+            return downloadUrl;
 
         } catch (error) {
             console.error('[GroupRouter] Download file failed:', error);

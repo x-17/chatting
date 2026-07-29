@@ -52,7 +52,7 @@
       <div class="center-panel">
         <template v-if="activeOrder">
           <MessageArea :order="activeOrder" :messages="currentMessages" :loading="messagesLoading"
-            @load-more="handleLoadMoreMessages" @is-agree-contract="handleIsAgreeContract" @download="handleDonloadFile"
+            :load-image-preview="handleLoadImagePreview" @load-more="handleLoadMoreMessages" @is-agree-contract="handleIsAgreeContract" @download="handleDonloadFile"
             @preview="handlePreviewFile" />
           <MessageInput :order="activeOrder" :disabled="!canSendMessage" :is-connected="isWebSocketConnected" @send="handleSendMessage"
             @send-file="handleSendFile" @send-contract="handleSendContract" />
@@ -263,6 +263,10 @@ async function handleSendFile(file: File) {
     ElMessage.error(error.message || "文件发送失败");
   }
 }
+async function handleLoadImagePreview(message: ChatMessage): Promise<string> {
+  return await downLoadFile(message as any, false);
+}
+
 async function handleDonloadFile(message: Extract<ChatMessage, P2PMessage>) {
   try {
     const url = await downLoadFile(message);

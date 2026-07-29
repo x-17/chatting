@@ -563,7 +563,10 @@ export class EnhancedP2PMessageRouter {
   /**
    * 下载订单文件 - 修改为POST方式获取文件内容
    */
-  async downloadOrderFile(message: P2PMessage): Promise<IP2PRouterResponse> {
+  async downloadOrderFile(
+    message: P2PMessage,
+    triggerDownload: boolean = true,
+  ): Promise<IP2PRouterResponse> {
     const startTime = Date.now();
 
     try {
@@ -611,11 +614,15 @@ export class EnhancedP2PMessageRouter {
         decryptionResult.mimeType,
       );
 
-      // 7. 自动触发浏览器下载
-      this.triggerFileDownload(downloadUrl, decryptionResult.originalName);
+      // Preview mode must keep the Blob URL alive and must not save automatically.
+      if (triggerDownload) {
+        this.triggerFileDownload(downloadUrl, decryptionResult.originalName);
+      }
 
       console.log(
-        `[P2PRouter] Order file decrypted and download triggered successfully`,
+        triggerDownload
+          ? `[P2PRouter] Order file decrypted and download triggered successfully`
+          : `[P2PRouter] Order file decrypted for preview successfully`,
       );
 
       return {
@@ -933,7 +940,7 @@ export class EnhancedP2PMessageRouter {
         type: data.messageType,
         senderId: data.senderId.toString(),
         recipientId: this.myUserId,
-        orderId: data.orderId,
+        orderId: String(data.orderId),
         content: messageContent,
         encryptedContent: encryptedData,
         timestamp: data.timestamp,

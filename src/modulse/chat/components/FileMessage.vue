@@ -11,14 +11,20 @@
       <div class="file-card" :class="{ mine: isMine }">
         <!-- 图片预览 -->
         <div v-if="isImage" class="image-preview">
-          <el-image :src="imagePreviewUrl" :preview-src-list="[imagePreviewUrl]" fit="cover" lazy>
+          <el-image
+            v-if="imagePreviewUrl"
+            :src="imagePreviewUrl"
+            :preview-src-list="[imagePreviewUrl]"
+            fit="cover"
+            @error="previewFailed = true"
+          >
             <template #error>
-              <div class="image-error">
+              <button class="image-error" type="button" @click="loadImagePreview(true)">
                 <el-icon>
                   <Picture />
                 </el-icon>
-                <span>加载失败</span>
-              </div>
+                <span>加载失败，点击重试</span>
+              </button>
             </template>
             <template #placeholder>
               <div class="image-loading">
@@ -28,6 +34,18 @@
               </div>
             </template>
           </el-image>
+          <div v-else-if="previewLoading" class="image-loading">
+            <el-icon class="is-loading">
+              <Loading />
+            </el-icon>
+            <span>图片解密加载中...</span>
+          </div>
+          <button v-else class="image-error" type="button" @click="loadImagePreview(true)">
+            <el-icon>
+              <Picture />
+            </el-icon>
+            <span>{{ previewFailed ? "加载失败，点击重试" : "点击加载图片" }}</span>
+          </button>
         </div>
 
         <!-- 文件信息 -->
@@ -79,7 +97,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, watch, onBeforeUnmount } from "vue";
 import { ElMessage } from "element-plus";
 import {
   Document,
@@ -98,6 +116,7 @@ import { ContractService } from "../../contracts/services/contract.service";
 interface Props {
   message: ChatMessage;
   isMine: boolean;
+  previewLoader?: (message: ChatMessage) => Promise<string>;
 }
 
 interface Emits {
@@ -117,12 +136,17 @@ const contractService = new ContractService(
   ""
 );
 
-const currentUserInitial = computed(
-  () => authStore.user?.userName.charAt(0).toUpperCase() || "U"
+function getInitial(value: unknown, fallback = "U"): string {
+  const normalized = String(value ?? "").trim();
+  return normalized ? normalized.charAt(0).toUpperCase() : fallback;
+}
+
+const currentUserInitial = computed(() =>
+  getInitial(authStore.user?.userName)
 );
 
 const senderInitial = computed(() =>
-  props.message.senderId.charAt(0).toUpperCase()
+  getInitial(props.message.senderId)
 );
 
 const fileName = computed(() => props.message.metadata?.fileName || "未知文件");
@@ -139,10 +163,89 @@ const isContract = computed(
   // props.message.metadata?.mimeType?.startsWith("image/")
 );
 
-const imagePreviewUrl = computed(() => {
-  // 如果是图片消息，返回预览URL
-  // 实际应该从服务器获取
-  return props.message.metadata?.previewUrl || "";
+const loadedPreviewUrl = ref("");
+const previewLoading = ref(false);
+const previewFailed = ref(false);
+let ownedPreviewUrl = "";
+let disposed = false;
+
+const imagePreviewUrl = computed(
+  () => props.message.metadata?.previewUrl || loadedPreviewUrl.value,
+);
+
+function releaseOwnedPreviewUrl(): void {
+  if (ownedPreviewUrl.startsWith("blob:")) {
+    URL.revokeObjectURL(ownedPreviewUrl);
+  }
+  ownedPreviewUrl = "";
+}
+
+async function createStablePreviewUrl(url: string): Promise<string> {
+  if (!url.startsWith("blob:")) return url;
+
+  // Consume the temporary object URL immediately so later revocation or lazy
+  // image loading cannot invalidate the preview.
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to read image preview: ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  URL.revokeObjectURL(url);
+
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () =>
+      reject(reader.error || new Error("Failed to read image preview"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function loadImagePreview(force = false): Promise<void> {
+  if (!isImage.value || previewLoading.value || !props.previewLoader) return;
+  if (!force && imagePreviewUrl.value) return;
+
+  previewLoading.value = true;
+  previewFailed.value = false;
+
+  try {
+    const temporaryUrl = await props.previewLoader(props.message);
+    if (!temporaryUrl) {
+      throw new Error("\u672a\u83b7\u53d6\u5230\u56fe\u7247\u9884\u89c8\u5730\u5740");
+    }
+
+    const url = await createStablePreviewUrl(temporaryUrl);
+    if (disposed) {
+      if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+      return;
+    }
+
+    releaseOwnedPreviewUrl();
+    loadedPreviewUrl.value = url;
+    ownedPreviewUrl = url.startsWith("blob:") ? url : "";
+  } catch (error) {
+    previewFailed.value = true;
+    const message = error instanceof Error ? error.message : "图片预览失败";
+    console.error("[FileMessage] Load image preview failed:", error);
+    ElMessage.error(message);
+  } finally {
+    previewLoading.value = false;
+  }
+}
+
+watch(
+  () => props.message.id,
+  () => {
+    releaseOwnedPreviewUrl();
+    loadedPreviewUrl.value = "";
+    previewFailed.value = false;
+  },
+);
+
+onBeforeUnmount(() => {
+  disposed = true;
+  releaseOwnedPreviewUrl();
 });
 
 function formatFileSize(bytes: number): string {
@@ -176,9 +279,6 @@ async function handleDownload() {
     downloading.value = false;
   }
 }
-onMounted(async () => {
-  // 是否显示签署框
-});
 </script>
 
 <style scoped>
@@ -239,6 +339,13 @@ onMounted(async () => {
   background: #f5f7fa;
   color: #909399;
   gap: 8px;
+}
+
+button.image-error {
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
 }
 
 .file-info {
