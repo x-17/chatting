@@ -77,22 +77,23 @@
       </div>
     </div>
     <!-- 合同详情弹窗 -->
-    <el-dialog v-model="contractFormVisible" title="填写合同详情" width="500px" :close-on-click-modal="false">
-      <el-form :model="contractForm" label-width="120px">
+    <el-dialog v-model="contractFormVisible" title="填写合同详情" width="500px" :close-on-click-modal="false"
+      @closed="handleContractDialogClosed">
+      <el-form ref="contractFormRef" :model="contractForm" :rules="contractFormRules" label-width="120px">
         <el-form-item label="订单编号">
           <el-input :model-value="activeOrder?.id" disabled />
         </el-form-item>
-        <el-form-item label="购买金额">
-          <el-input-number v-model="contractForm.amount" :precision="2" :step="0.1" :min="0" style="width: 100%" />
+        <el-form-item label="购买金额" prop="amount">
+          <el-input-number v-model="contractForm.amount" :step="0.1" style="width: 100%" />
         </el-form-item>
-        <el-form-item label="使用期限(月)">
-          <el-input-number v-model="contractForm.usagePeriod" :min="1" :step="1" style="width: 100%" />
+        <el-form-item label="使用期限(月)" prop="usagePeriod">
+          <el-input-number v-model="contractForm.usagePeriod" :step="1" style="width: 100%" />
         </el-form-item>
-        <el-form-item label="开始时间">
+        <el-form-item label="开始时间" prop="usageStartTime">
           <el-date-picker v-model="contractForm.usageStartTime" type="datetime" placeholder="选择开始时间"
-            style="width: 100%" />
+            style="width: 100%" @change="handleUsageStartTimeChange" />
         </el-form-item>
-        <el-form-item label="结束时间">
+        <el-form-item label="结束时间" prop="usageEndTime">
           <el-date-picker v-model="contractForm.usageEndTime" type="datetime" placeholder="选择结束时间"
             style="width: 100%" />
         </el-form-item>
@@ -100,7 +101,7 @@
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="contractFormVisible = false">取消</el-button>
-          <el-button type="primary" @click="submitContract"> 确认签署 </el-button>
+          <el-button type="primary" :loading="contractSubmitting" @click="submitContract"> 确认签署 </el-button>
         </span>
       </template>
     </el-dialog>
@@ -128,6 +129,7 @@
 import { ref, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
+import type { FormInstance, FormRules } from "element-plus";
 import { Message, DArrowLeft, DArrowRight, Connection } from "@element-plus/icons-vue";
 import TransactionGraph from "../components/TransactionGraph.vue";
 import OrderList from "../components/OrderList.vue";
@@ -319,6 +321,8 @@ async function handleSendContract(file: File) {
 
 const contractFormVisible = ref(false);
 const contractFile = ref<File | null>(null);
+const contractFormRef = ref<FormInstance>();
+const contractSubmitting = ref(false);
 const contractForm = ref<ContractDetails>({
   amount: 0,
   usagePeriod: 12,
@@ -326,9 +330,98 @@ const contractForm = ref<ContractDetails>({
   usageEndTime: new Date(new Date().setFullYear(new Date().getFullYear() + 1)),
 });
 
-async function submitContract() {
-  if (!activeOrder.value || !contractFile.value) return;
+const isValidDate = (value: unknown): value is Date =>
+  value instanceof Date && !Number.isNaN(value.getTime());
 
+const contractFormRules: FormRules<ContractDetails> = {
+  amount: [
+    {
+      validator: (_rule, value, callback) => {
+        if (value === null || value === undefined) {
+          callback(new Error("请输入购买金额"));
+        } else if (!Number.isFinite(value) || value <= 0) {
+          callback(new Error("购买金额必须大于0"));
+        } else {
+          callback();
+        }
+      },
+      trigger: ["blur", "change"],
+    },
+  ],
+  usagePeriod: [
+    {
+      validator: (_rule, value, callback) => {
+        if (value === null || value === undefined) {
+          callback(new Error("请输入使用期限"));
+        } else if (!Number.isInteger(value) || value <= 0) {
+          callback(new Error("使用期限必须为大于0的整数"));
+        } else {
+          callback();
+        }
+      },
+      trigger: ["blur", "change"],
+    },
+  ],
+  usageStartTime: [
+    {
+      validator: (_rule, value, callback) => {
+        if (!isValidDate(value)) {
+          callback(new Error("请选择开始时间"));
+        } else {
+          callback();
+        }
+      },
+      trigger: "change",
+    },
+  ],
+  usageEndTime: [
+    {
+      validator: (_rule, value, callback) => {
+        if (!isValidDate(value)) {
+          callback(new Error("请选择结束时间"));
+        } else if (
+          isValidDate(contractForm.value.usageStartTime) &&
+          contractForm.value.usageStartTime.getTime() >= value.getTime()
+        ) {
+          callback(new Error("结束时间必须晚于开始时间"));
+        } else {
+          callback();
+        }
+      },
+      trigger: "change",
+    },
+  ],
+};
+
+function handleUsageStartTimeChange() {
+  if (contractForm.value.usageEndTime) {
+    contractFormRef.value?.validateField("usageEndTime").catch(() => undefined);
+  }
+}
+
+function handleContractDialogClosed() {
+  contractFormRef.value?.clearValidate();
+  contractFile.value = null;
+}
+
+async function submitContract() {
+  if (!activeOrder.value) {
+    ElMessage.warning("请选择订单");
+    return;
+  }
+  if (!contractFile.value) {
+    ElMessage.warning("请选择合同文件");
+    return;
+  }
+  if (!contractFormRef.value) return;
+
+  const valid = await contractFormRef.value.validate().catch(() => false);
+  if (!valid) {
+    ElMessage.warning("请检查合同信息是否填写正确");
+    return;
+  }
+
+  contractSubmitting.value = true;
   try {
     await sendContractFile(
       activeOrder.value,
@@ -339,6 +432,8 @@ async function submitContract() {
     contractFormVisible.value = false;
   } catch (error: any) {
     ElMessage.error(error.message || "合同文件发送失败");
+  } finally {
+    contractSubmitting.value = false;
   }
 }
 
