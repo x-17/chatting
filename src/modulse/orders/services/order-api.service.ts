@@ -14,7 +14,7 @@ export class OrderApiService {
   async getOrder(orderId: string): Promise<Order> {
     try {
       const response = await this.apiClient.get<{ order: Order }>(
-        `/api/orders/${orderId}`
+        `/api/orders/${orderId}`,
       );
       return response.data.order;
     } catch (error) {
@@ -25,7 +25,10 @@ export class OrderApiService {
   /**
    * 添加订单
    */
-  async createOrder(bssOrderId: number, parentOrderId?: number): Promise<string> {
+  async createOrder(
+    bssOrderId: number,
+    parentOrderId?: number,
+  ): Promise<ApiResponse<string>> {
     try {
       const requestData: any = { bssOrderId: bssOrderId };
       if (parentOrderId !== undefined && parentOrderId !== null) {
@@ -33,9 +36,9 @@ export class OrderApiService {
       }
       const response = await this.apiClient.post<ApiResponse<string>>(
         "/order/add",
-        requestData
+        requestData,
       );
-      return response.data.msg;
+      return response.data;
     } catch (error) {
       console.error("[OrderApi] Create order failed:", error);
       throw error;
@@ -46,9 +49,8 @@ export class OrderApiService {
    */
   async getMyOrders(): Promise<Order[]> {
     try {
-      const response = await this.apiClient.post<ApiResponse<Order[]>>(
-        "/order/queryOrders"
-      );
+      const response =
+        await this.apiClient.post<ApiResponse<Order[]>>("/order/queryOrders");
       return response.data.data;
     } catch (error) {
       console.error("[OrderApi] Get my orders failed:", error);
@@ -61,7 +63,7 @@ export class OrderApiService {
    */
   async updateOrderStatus(
     orderId: string,
-    flag: Order["flag"]
+    flag: Order["flag"],
   ): Promise<boolean> {
     try {
       const response = await this.apiClient.post<ApiResponse<boolean>>(
@@ -69,14 +71,14 @@ export class OrderApiService {
         {
           orderId,
           flag,
-        }
+        },
       );
       if (response.data.code === 1) {
         return response.data.data;
       } else {
         console.warn(
           "[OrderApi] Update order status failed:",
-          response.data.msg
+          response.data.msg,
         );
         return false;
       }
@@ -92,7 +94,7 @@ export class OrderApiService {
   async getOrderUnreadCount(orderId: string): Promise<number> {
     try {
       const response = await this.apiClient.get<{ count: number }>(
-        `/api/orders/${orderId}/unread-count`
+        `/api/orders/${orderId}/unread-count`,
       );
       return response.data.count;
     } catch (error) {
@@ -105,7 +107,7 @@ export class OrderApiService {
    * 批量获取多个订单的未读消息数
    */
   async batchGetUnreadCounts(
-    orderIds: string[]
+    orderIds: string[],
   ): Promise<Record<string, number>> {
     try {
       const response = await this.apiClient.post<{

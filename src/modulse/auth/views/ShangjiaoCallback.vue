@@ -119,6 +119,7 @@ import { useRoute, useRouter } from "vue-router";
 import { ElButton, ElCard, ElAlert, ElMessage } from "element-plus";
 import { useAuthStore } from "../services/auth.store";
 import { OrderApiService } from "../../orders/services/order-api.service";
+import { log } from "echarts/types/src/util/log.js";
 
 const route = useRoute();
 const router = useRouter();
@@ -242,8 +243,12 @@ const startTicketLoginFlow = async () => {
       throw new Error("无效的订单ID");
     }
 
-    const msg = await orderApi.createOrder(bssOrderId, bssParentOrderId);
-    ElMessage.success(msg || "进入磋商订单成功");
+    const res = await orderApi.createOrder(bssOrderId, bssParentOrderId);
+    if (res.code === 0) {
+      ElMessage.success("进入磋商订单成功");
+    } else {
+      ElMessage.error(res.msg);
+    }
     currentStep.value = "success";
 
     // 3. 进入聊天页面
