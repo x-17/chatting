@@ -8,7 +8,6 @@ import { getEnhancedP2PRouter } from "../../signal/services/p2p-message-router.e
 import { getGroupMessageRouter } from "../../groupchat/services/enhanced-group-message-router";
 import { getMessagePersistenceService } from "../../signal/services/message-persistence.service";
 import type { P2PMessage } from "../../signal/types/message.types";
-import { ElMessage } from "element-plus";
 import { ContractService } from "../../contracts/services/contract.service";
 import type { GroupMessage } from "../../groupchat/types/group-message.types";
 
@@ -373,36 +372,7 @@ export function useChat() {
       return optimisticMessage;
     }
 
-    let ContractServiceInstance = new ContractService(myUserId);
-    let res = await getP2PRouter().sendFile(
-      order.id,
-      file,
-      String(order.otherParty.id),
-      "contract",
-    );
-    const optimisticMessage: ChatMessage = {
-      id: messageId,
-      type: "contract",
-      orderId: order.id,
-      senderId: myUserId,
-      recipientId:
-        order.conversationType === "p2p"
-          ? String(order.otherParty.id)
-          : undefined,
-      groupId:
-        order.conversationType === "group" ? order.conversationId : undefined,
-      content: `[文件] ${file.name}`,
-      timestamp: Date.now(),
-      status: res.success ? "sent" : "failed",
-      metadata: {
-        fileName: file.name,
-        fileSize: file.size,
-        mimeType: file.type,
-        fileId: res.success ? res.data.fileId : undefined,
-        ...details,
-      },
-      __conversationType: order.conversationType,
-    };
+    const contractService = new ContractService(myUserId);
 
     const formatDate = (date: Date) => {
       const yyyy = date.getFullYear();
@@ -414,28 +384,62 @@ export function useChat() {
       return `${yyyy}-${MM}-${dd} ${HH}:${mm}:${ss}`;
     };
 
-    const fileBuffer = await file.arrayBuffer();
-    const { e2eeService } = await import("../../signal/services/e2ee.service");
-    const signature = await e2eeService.signContract(
-      myUserId,
-      new Uint8Array(fileBuffer),
+    const res = await getP2PRouter().sendFile(
+      order.id,
+      file,
+      String(order.otherParty.id),
+      "contract",
+      async ({ fileId, signature }) => {
+        if (!signature) {
+          throw new Error("合同签名生成失败");
+        }
+
+        const contractRes = await contractService.uploadOrderQuote({
+          orderId: order.id,
+          amount: details.amount,
+          usagePeriod: details.usagePeriod,
+          usageStartTime: formatDate(details.usageStartTime),
+          usageEndTime: formatDate(details.usageEndTime),
+          fileId,
+          signature,
+        });
+
+        if (contractRes.code !== 1) {
+          throw new Error(String(contractRes.data || "合同签署失败"));
+        }
+        console.log("Contract sign response:", contractRes.data);
+      },
     );
 
-    const contract_res = await ContractServiceInstance.uploadOrderQuote({
-      orderId: order.id,
-      amount: details.amount,
-      usagePeriod: details.usagePeriod,
-      usageStartTime: formatDate(details.usageStartTime),
-      usageEndTime: formatDate(details.usageEndTime),
-      fileId: res.data.fileId,
-      signature: signature,
-    });
-    ElMessage.success(contract_res.data);
-    console.log("Contract sign response:", contract_res.data);
-    addMessageToConversation(order.conversationId, optimisticMessage);
-    if (!res.success || res.error) {
-      throw new Error(res.error || "文件发送失败（业务错误）");
+    if (!res.success || !res.data) {
+      throw new Error(res.error || "合同签署失败");
     }
+
+    const optimisticMessage: ChatMessage = {
+      id: res.data.messageId || messageId,
+      type: "contract",
+      orderId: order.id,
+      senderId: myUserId,
+      recipientId:
+        order.conversationType === "p2p"
+          ? String(order.otherParty.id)
+          : undefined,
+      groupId:
+        order.conversationType === "group" ? order.conversationId : undefined,
+      content: `[文件] ${file.name}`,
+      timestamp: Date.now(),
+      status: "sent",
+      metadata: {
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: file.type,
+        fileId: res.data.fileId,
+        ...details,
+      },
+      __conversationType: order.conversationType,
+    };
+
+    addMessageToConversation(order.conversationId, optimisticMessage);
     return optimisticMessage; // 返回成功的消息数据
   }
 

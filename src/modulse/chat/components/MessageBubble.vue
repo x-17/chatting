@@ -3,7 +3,7 @@
   <div class="message-bubble-wrapper" :class="{ 'is-mine': isMine }">
     <!-- 发送者信息（群聊） -->
     <div v-if="showSender && !isMine" class="sender-name">
-      {{ message.senderId }}
+      {{ senderName || message.senderId }}
     </div>
 
     <div class="message-bubble">
@@ -60,17 +60,24 @@ interface Props {
   message: ChatMessage;
   isMine: boolean;
   showSender?: boolean;
+  currentUserName?: string;
+  senderName?: string;
 }
 
 const props = defineProps<Props>();
 const authStore = useAuthStore();
 
-const currentUserInitial = computed(
-  () => authStore.user?.userName?.charAt(0).toUpperCase() || "U"
+function getInitial(value: unknown, fallback = "U"): string {
+  const normalized = String(value ?? "").trim();
+  return normalized ? normalized.charAt(0).toUpperCase() : fallback;
+}
+
+const currentUserInitial = computed(() =>
+  getInitial(props.currentUserName || authStore.user?.userName),
 );
 
 const senderInitial = computed(() =>
-  String(props.message.senderId).charAt(0).toUpperCase()
+  getInitial(props.senderName || props.message.senderId),
 );
 
 function formatTime(timestamp: number): string {

@@ -23,5 +23,6 @@ export interface User {
     openId: string;
     tenantId: number;
     userName: string;
+    reputationScore?: number;
 }
 

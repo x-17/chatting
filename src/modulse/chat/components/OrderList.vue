@@ -98,8 +98,8 @@ const emit = defineEmits<Emits>();
 const searchKeyword = ref("");
 const showUnreadOnly = ref(false);
 const activeCollapse = ref(["purchase-active", "sale-active"]);
-const purchaseSubCollapse = ref(["active"]);
-const saleSubCollapse = ref(["active"]);
+const purchaseSubCollapse = ref(["active", "completed"]);
+const saleSubCollapse = ref(["active", "completed"]);
 
 onMounted(async () => { });
 

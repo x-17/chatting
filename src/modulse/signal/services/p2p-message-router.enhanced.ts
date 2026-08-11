@@ -335,6 +335,10 @@ export class EnhancedP2PMessageRouter {
     file: File,
     _recipientId: string,
     type?: "contract",
+    beforeSend?: (prepared: {
+      fileId: number;
+      signature?: string;
+    }) => Promise<void>,
   ): Promise<IP2PRouterResponse> {
     const startTime = Date.now();
     const fileId = this.generateFileId();
@@ -357,14 +361,15 @@ export class EnhancedP2PMessageRouter {
       let backendFileId: number;
       let frontendFileIdStr: string;
       let fileMessageContent: string;
+      let contractSignature: string | undefined;
 
       if (messageType === "contract") {
         const fileContent = await file.arrayBuffer();
         
         // 签名合同
-        const signature = await e2eeService.signContract(
+        contractSignature = await e2eeService.signContract(
           this.myUserId,
-          new Uint8Array(fileContent)
+          new Uint8Array(fileContent),
         );
         
         backendFileId = await this.uploadEncryptedFileToServer(
@@ -381,7 +386,7 @@ export class EnhancedP2PMessageRouter {
           fileSize: file.size,
           mimeType: file.type,
           isPlaintext: true, // 标识为明文
-          signature: signature, // 附加签名
+          signature: contractSignature, // 附加签名
         });
       } else {
         const encryptedPackage = await fileEncryptionService.encryptFileForP2P(
@@ -409,6 +414,14 @@ export class EnhancedP2PMessageRouter {
       }
 
       // 6. 加密文件消息 (消息体还是加密的，只是内容标识为明文)
+      // Complete the contract business operation before creating or sending the chat message.
+      if (beforeSend) {
+        await beforeSend({
+          fileId: backendFileId,
+          signature: contractSignature,
+        });
+      }
+
       const encryptionResult = await e2eeService.encryptMessage(
         this.myUserId,
         recipientId,
@@ -667,23 +680,51 @@ export class EnhancedP2PMessageRouter {
         `[P2PRouter] Downloading contract for order ${message.orderId}: ${message.metadata.fileName}`,
       );
 
-      // 1. 解析文件消息
-      const fileMessageData = JSON.parse(message.content);
-      const backendFileId = fileMessageData.fileId; // 后端数字ID
-      const frontendFileId = fileMessageData.frontendFileId; // 前端ID用于进度
+      // 1. Parse file message.
+      // Received history messages usually keep decrypted JSON in content, while
+      // sender-side optimistic messages use display text like `[file] file.pdf`
+      // and keep file fields in metadata.
+      let fileMessageData: any;
+      try {
+        fileMessageData = JSON.parse(message.content);
+      } catch {
+        fileMessageData = {
+          fileId: message.metadata?.fileId,
+          frontendFileId: message.metadata?.frontendFileId ?? message.metadata?.fileId,
+          fileName: message.metadata?.fileName,
+          fileSize: message.metadata?.fileSize,
+          mimeType: message.metadata?.mimeType,
+          metadata: message.metadata?.metadata,
+          signature: message.metadata?.signature,
+          isPlaintext: true,
+        };
+      }
 
-      // 2. 使用POST请求获取文件内容
+      const backendFileId = Number(fileMessageData.fileId); // backend numeric ID
+      if (!Number.isFinite(backendFileId)) {
+        throw new Error("Invalid contract file ID; cannot download preview");
+      }
+      const frontendFileId = String(
+        fileMessageData.frontendFileId ?? message.metadata?.fileId ?? message.id,
+      ); // frontend ID for progress/legacy encrypted package
+
+      // 2. Use POST request to fetch file content
       const fileContentResponse =
         await this.postRequestFileContent(backendFileId);
 
-      // 3. 将Base64文件内容转换为ArrayBuffer
+      // 3. Convert Base64 content to ArrayBuffer
       const encryptedContent = this.base64ToArrayBuffer(
         fileContentResponse.fileContent,
       );
 
       let contentBuffer: ArrayBuffer;
-      let mimeType = fileMessageData.mimeType;
-      let originalName = fileMessageData.fileName;
+      let mimeType =
+        fileMessageData.mimeType || message.metadata?.mimeType || "application/octet-stream";
+      let originalName =
+        fileMessageData.fileName ||
+        message.metadata?.fileName ||
+        fileContentResponse.fileName ||
+        "contract";
       let isVerified = true;
 
       if (fileMessageData.signature && fileMessageData.metadata) {

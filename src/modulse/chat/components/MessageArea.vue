@@ -55,6 +55,8 @@
             v-else-if="message.type === 'file' || message.type === 'image'"
             :message="message"
             :is-mine="String(message.senderId) === currentUserId"
+            :current-user-name="currentUserName"
+            :sender-name="getSenderName(message)"
             :preview-loader="props.loadImagePreview"
             @download="handleDownloadFile"
           />
@@ -62,6 +64,8 @@
             v-else-if="message.type === 'contract'"
             :message="message"
             :is-mine="String(message.senderId) === currentUserId"
+            :current-user-name="currentUserName"
+            :sender-name="getSenderName(message)"
             @trigger-contract="handleContract"
             @preview="handlePreviewFile"
             @download="handleDownloadFile"
@@ -72,6 +76,8 @@
             v-else
             :message="message"
             :is-mine="String(message.senderId) === currentUserId"
+            :current-user-name="currentUserName"
+            :sender-name="getSenderName(message)"
             :show-sender="isGroupChat"
           />
         </template>
@@ -156,9 +162,45 @@ const currentUserId = computed(() =>
       "",
   ),
 );
-const otherPartyInitial = computed(() =>
-  props.order.otherParty.name.charAt(0).toUpperCase(),
-);
+const currentUserName = computed(() => {
+  if (authStore.user?.userName) return authStore.user.userName;
+
+  const userId = sessionStorage.getItem("auth_current_user_id");
+  if (userId) {
+    try {
+      const storedUser = JSON.parse(
+        localStorage.getItem(`auth_${userId}_user`) || "{}",
+      );
+      return storedUser.userName || storedUser.username || "??";
+    } catch {
+      // Ignore malformed cached user data and use the fallback below.
+    }
+  }
+
+  return "??";
+});
+
+const otherPartyInitial = computed(() => {
+  const name = String(props.order.otherParty?.name || "??").trim();
+  return name.charAt(0).toUpperCase();
+});
+
+function getSenderName(message: ChatMessage): string {
+  if (String(message.senderId) === currentUserId.value) {
+    return currentUserName.value;
+  }
+
+  const metadata = message.metadata as Record<string, unknown> | undefined;
+  const metadataName =
+    metadata?.memberName ||
+    metadata?.senderName ||
+    metadata?.userName ||
+    metadata?.username;
+
+  return String(
+    metadataName || props.order.otherParty?.name || message.senderId || "??",
+  );
+}
 const isGroupChat = computed(() => props.order.conversationType === "group");
 const ContractServiceInstance = new ContractService(
   authStore.currentUserId ||

@@ -12,7 +12,7 @@ export interface OrderParticipant {
   username?: string;
   // userName: string;
   roleType: 0 | 1; // 0 - 买家, 1 - 卖家
-  // creditScore: number;
+  reputationScore: number;
   dataName: string;
 }
 
@@ -36,6 +36,8 @@ export interface Order {
   contract: string; //"https://file-server/contract.pdf", 订单关联契约存储url
   //参与方
   participants: OrderParticipant[];
+  recommendedSignerTenantId?: number;
+  recommendedSignerReputationScore?: number;
   // 元数据
   metadata?: {
     lastMessageTime?: number;

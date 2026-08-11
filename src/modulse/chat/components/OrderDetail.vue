@@ -28,7 +28,7 @@
           </div>
           <div class="info-item">
             <span class="label">创建时间</span>
-            <span class="value">{{ formatDate(order.createdAt) }}</span>
+            <span class="value">{{ formatDate(orderCreatedAt) }}</span>
           </div>
           <div class="info-item">
             <span class="label">订单类型</span>
@@ -62,12 +62,19 @@
           {{ order.type === "purchase" ? "卖方信息" : "买方信息" }}
         </div>
         <div class="party-info">
-          <el-avatar :size="48">{{
-            order.otherParty.name.charAt(0)
-          }}</el-avatar>
+          <el-avatar :size="48">{{ otherPartyInitial }}</el-avatar>
           <div class="party-meta">
             <div class="party-name">{{ order.otherParty.name }}</div>
             <div class="party-id">ID: {{ order.otherParty.id.slice(-8) }}</div>
+            <div v-if="order.otherParty.reputationScore != null" class="party-reputation">
+              <span>信誉分</span>
+              <span
+                class="reputation-score"
+                :class="getReputationClass(order.otherParty.reputationScore)"
+              >
+                {{ order.otherParty.reputationScore }}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -125,7 +132,22 @@
 
       <!-- 操作按钮 -->
       <div class="detail-actions">
-        <el-button v-if="canCreateContract" type="primary" :icon="DocumentAdd" @click="emit('create-contract')" block>
+        <el-alert
+          v-if="canCreateContract && !hasFirstSignPriority"
+          title="您的信誉度不足，只能等待对方发起签署"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="sign-priority-alert"
+        />
+        <el-button
+          v-if="canCreateContract"
+          type="primary"
+          :icon="DocumentAdd"
+          :disabled="!hasFirstSignPriority"
+          @click="handleCreateContract"
+          block
+        >
           创建合同
         </el-button>
         <el-button v-if="order.status === 'active'" type="success" :icon="CircleCheck" @click="handleCompleteOrder"
@@ -171,7 +193,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
@@ -184,7 +206,6 @@ import {
   Warning,
 } from "@element-plus/icons-vue";
 import { useAuthStore } from "../../auth/services/auth.store";
-import { getOrderService } from "../../orders/services/order.service";
 import { useOrderStore } from "../../orders/store/order.store";
 import { getContractService } from "../../contracts/services/contract.service";
 import type { Order as ChatOrder } from "../types/chat.types";
@@ -272,30 +293,77 @@ async function showDisputeGraph() {
   }
 }
 
-// const orderService = computed(() => getOrderService(authStore.user!.id));
-
 const contractService = computed(() => getContractService(authStore.user!.id));
 
-const statusType = computed(() => {
-  const typeMap: Record<string, any> = {
-    active: "primary",
-    completed: "success",
-    cancelled: "info",
-    pending: "warning",
-  };
-  return typeMap[props.order.status] || "info";
+const orderCreatedAt = computed(() => {
+  const source = fullOrder.value as (FullOrder & Record<string, unknown>) | null;
+  return (
+    source?.createdAt ??
+    source?.createTime ??
+    source?.createdTime ??
+    props.order.createdAt
+  );
 });
 
-// const statusText = computed(() =>
-//   orderService.value.getOrderStatusText(
-//     orderInfo.value?.status || props.order.status
-//   )
-// );
+const otherPartyInitial = computed(() => {
+  const name = String(props.order.otherParty?.name || "未知用户").trim();
+  return name.charAt(0).toUpperCase();
+});
 
-// const canCreateContract = computed(() => {
-//   if (!orderInfo.value) return false;
-//   return orderService.value.canCreateContract(orderInfo.value).allowed;
-// });
+const statusText = computed(() => {
+  const flag = fullOrder.value?.flag;
+  const flagTextMap: Record<number, string> = {
+    1: "磋商成功",
+    2: "磋商失败",
+    3: "交付成功",
+    4: "待磋商",
+  };
+
+  if (flag !== undefined && flag !== null) {
+    return flagTextMap[Number(flag)] || "未知状态";
+  }
+
+  return props.order.status === "active" ? "进行中" : "已完成";
+});
+
+const statusType = computed(() => {
+  const flag = fullOrder.value?.flag;
+  const flagTypeMap: Record<number, any> = {
+    1: "success",
+    2: "danger",
+    3: "success",
+    4: "warning",
+  };
+
+  if (flag !== undefined && flag !== null) {
+    return flagTypeMap[Number(flag)] || "info";
+  }
+
+  return props.order.status === "active" ? "primary" : "success";
+});
+
+const canCreateContract = computed(() => props.order.status === "active");
+
+const myReputationScore = computed(
+  () => authStore.user?.reputationScore ?? 100,
+);
+const otherPartyReputationScore = computed(
+  () => props.order.otherParty.reputationScore ?? 100,
+);
+const hasFirstSignPriority = computed(() => {
+  if (props.order.conversationType !== "p2p") return true;
+  return myReputationScore.value >= otherPartyReputationScore.value;
+});
+
+function handleCreateContract() {
+  if (!hasFirstSignPriority.value) {
+    ElMessage.warning(
+      `您的信誉度不足，只能等待对方发起签署（您的信誉分：${myReputationScore.value}，对方信誉分：${otherPartyReputationScore.value}）`,
+    );
+    return;
+  }
+  emit("create-contract");
+}
 
 // onMounted(async () => {
 //   await loadOrderDetail();
@@ -323,8 +391,16 @@ async function loadContracts() {
   }
 }
 
-function formatDate(timestamp: number): string {
+function formatDate(timestamp?: number | string): string {
+  if (timestamp === undefined || timestamp === null || timestamp === "") {
+    return "未知";
+  }
+
   const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return "未知";
+  }
+
   return date.toLocaleString("zh-CN", {
     year: "numeric",
     month: "2-digit",
@@ -332,6 +408,14 @@ function formatDate(timestamp: number): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function getReputationClass(score?: number): string {
+  const value = Number(score);
+  if (!Number.isFinite(value)) return "reputation-unknown";
+  if (value >= 80) return "reputation-high";
+  if (value >= 60) return "reputation-medium";
+  return "reputation-low";
 }
 
 function getContractStatusType(status: string): string {
@@ -477,6 +561,52 @@ function showMoreActions() {
   font-size: 12px;
   color: #909399;
   margin-top: 4px;
+}
+
+.party-reputation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #606266;
+}
+
+.reputation-score {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+
+.reputation-high {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.reputation-medium {
+  color: #92400e;
+  background: #fef3c7;
+  border-color: #fcd34d;
+}
+
+.reputation-low {
+  color: #b91c1c;
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.reputation-unknown {
+  color: #475569;
+  background: #e2e8f0;
+  border-color: #cbd5e1;
 }
 
 .goods-info {

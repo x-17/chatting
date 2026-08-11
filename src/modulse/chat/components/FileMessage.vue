@@ -116,6 +116,8 @@ import { ContractService } from "../../contracts/services/contract.service";
 interface Props {
   message: ChatMessage;
   isMine: boolean;
+  currentUserName?: string;
+  senderName?: string;
   previewLoader?: (message: ChatMessage) => Promise<string>;
 }
 
@@ -142,11 +144,11 @@ function getInitial(value: unknown, fallback = "U"): string {
 }
 
 const currentUserInitial = computed(() =>
-  getInitial(authStore.user?.userName)
+  getInitial(props.currentUserName || authStore.user?.userName),
 );
 
 const senderInitial = computed(() =>
-  getInitial(props.message.senderId)
+  getInitial(props.senderName || props.message.senderId),
 );
 
 const fileName = computed(() => props.message.metadata?.fileName || "未知文件");

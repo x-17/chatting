@@ -14,6 +14,7 @@ export interface Order {
     id: string;
     name: string;
     avatar?: string;
+    reputationScore?: number;
   };
   conversationId: string; // 会话ID
   conversationType: "p2p" | "group";

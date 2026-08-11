@@ -119,7 +119,6 @@ import { useRoute, useRouter } from "vue-router";
 import { ElButton, ElCard, ElAlert, ElMessage } from "element-plus";
 import { useAuthStore } from "../services/auth.store";
 import { OrderApiService } from "../../orders/services/order-api.service";
-import { log } from "echarts/types/src/util/log.js";
 
 const route = useRoute();
 const router = useRouter();

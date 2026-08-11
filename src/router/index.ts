@@ -74,7 +74,7 @@ const router = createRouter({
   routes: [
     {
       path: "/",
-      redirect: "/login",
+      redirect: "/auth/shangjiao/callback",
     },
     // 合并所有模块的路由
     ...authRoutes,
@@ -106,7 +106,9 @@ router.beforeEach(async (to, _from, next) => {
   if (requiresAuth && !authStore.isAuthenticated) {
     next({
       name: "Login",
-      query: authStore.errorMessage ? { reason: "key-verification" } : undefined,
+      query: authStore.errorMessage
+        ? { reason: "key-verification" }
+        : undefined,
     });
     return;
   }

@@ -34,7 +34,8 @@ export function useOrderList() {
         otherParty = {
           userId: order.orderId,
           dataName: order.dataName || "未命名群组",
-          roleType: -1 // Special role for group
+          roleType: -1, // Special role for group
+          reputationScore: order.recommendedSignerReputationScore
         };
       } else {
         otherParty = isBuyer
@@ -50,7 +51,14 @@ export function useOrderList() {
           order.flag === 4 ? "active" : ("completed" as "active" | "completed"),
         otherParty: {
           id: String(otherParty?.userId || ""),
-          name: otherParty?.dataName || "未知用户",
+          name:
+            otherParty?.username ||
+            (otherParty as any)?.userName ||
+            (otherParty as any)?.nickName ||
+            (otherParty as any)?.name ||
+            otherParty?.dataName ||
+            "未知用户",
+          reputationScore: otherParty?.reputationScore,
         },
         conversationId: order.orderId,
         conversationType: (isGroup ? "group" : "p2p") as
