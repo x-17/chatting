@@ -19,7 +19,6 @@ interface ChatState {
 
 export interface ContractDetails {
   amount: number;
-  usagePeriod: number;
   usageStartTime: Date;
   usageEndTime: Date;
 }
@@ -397,7 +396,6 @@ export function useChat() {
         const contractRes = await contractService.uploadOrderQuote({
           orderId: order.id,
           amount: details.amount,
-          usagePeriod: details.usagePeriod,
           usageStartTime: formatDate(details.usageStartTime),
           usageEndTime: formatDate(details.usageEndTime),
           fileId,

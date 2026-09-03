@@ -127,12 +127,8 @@
             style="width: 100%"
           />
         </el-form-item>
-        <el-form-item label="使用期限(月)" prop="usagePeriod">
-          <el-input-number
-            v-model="contractForm.usagePeriod"
-            :step="1"
-            style="width: 100%"
-          />
+        <el-form-item label="有效期限(天)">
+          <el-input :model-value="effectiveUsageDaysText" disabled />
         </el-form-item>
         <el-form-item label="开始时间" prop="usageStartTime">
           <el-date-picker
@@ -429,13 +425,26 @@ const contractFormRef = ref<FormInstance>();
 const contractSubmitting = ref(false);
 const contractForm = ref<ContractDetails>({
   amount: 0,
-  usagePeriod: 12,
   usageStartTime: new Date(),
   usageEndTime: new Date(new Date().setFullYear(new Date().getFullYear() + 1)),
 });
 
 const isValidDate = (value: unknown): value is Date =>
   value instanceof Date && !Number.isNaN(value.getTime());
+
+const effectiveUsageDays = computed(() => {
+  const start = contractForm.value.usageStartTime;
+  const end = contractForm.value.usageEndTime;
+  if (!isValidDate(start) || !isValidDate(end)) return 0;
+
+  const durationMillis = end.getTime() - start.getTime();
+  if (durationMillis <= 0) return 0;
+  return Math.ceil(durationMillis / (24 * 60 * 60 * 1000));
+});
+
+const effectiveUsageDaysText = computed(() =>
+  effectiveUsageDays.value > 0 ? `${effectiveUsageDays.value} 天` : "请先选择有效的起止时间",
+);
 
 const contractFormRules: FormRules<ContractDetails> = {
   amount: [
@@ -445,20 +454,6 @@ const contractFormRules: FormRules<ContractDetails> = {
           callback(new Error("请输入购买金额"));
         } else if (!Number.isFinite(value) || value <= 0) {
           callback(new Error("购买金额必须大于0"));
-        } else {
-          callback();
-        }
-      },
-      trigger: ["blur", "change"],
-    },
-  ],
-  usagePeriod: [
-    {
-      validator: (_rule, value, callback) => {
-        if (value === null || value === undefined) {
-          callback(new Error("请输入使用期限"));
-        } else if (!Number.isInteger(value) || value <= 0) {
-          callback(new Error("使用期限必须为大于0的整数"));
         } else {
           callback();
         }

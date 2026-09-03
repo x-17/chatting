@@ -121,7 +121,6 @@ export interface fileInfo {
 export interface UploadOrderQuoteRequest {
   orderId: string;
   amount: number;
-  usagePeriod: number;
   usageStartTime: string; // yyyy-MM-dd HH:mm:ss
   usageEndTime: string; // yyyy-MM-dd HH:mm:ss
   fileId: number;
