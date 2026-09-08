@@ -26,7 +26,7 @@
 | ---------------- | --------- | -------- | --------------------- | -------------------------------- |
 | `orderId`        | `String`  | ✅ 是     | `ORD-20251115001`     | 订单编号，唯一标识一笔订单。     |
 | `amount`         | `Double`  | ✅ 是     | `1299.99`             | 订单对应的购买金额。             |
-| `usagePeriod`    | `Integer` | ✅ 是     | `12`                  | 数据使用期限（单位：月）。       |
+| `usagePeriod`    | `Integer` | 否（兼容旧版） | `365`             | 服务端根据起止时间计算的有效天数；新前端无需传递。 |
 | `usageStartTime` | `Date`    | ✅ 是     | `2025-11-15 00:00:00` | 数据使用开始时间。               |
 | `usageEndTime`   | `Date`    | ✅ 是     | `2026-11-14 23:59:59` | 数据使用结束时间。               |
 | `fileId`         | `Integer` | ✅ 是     | `321`                 | 上传的合同文件在系统中的 ID。    |
@@ -46,7 +46,6 @@ token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 orderId=ORD-20251115001
 amount=1999.00
-usagePeriod=6
 usageStartTime=2025-11-15 00:00:00
 usageEndTime=2026-05-14 23:59:59
 fileId=88

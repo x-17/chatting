@@ -186,7 +186,6 @@ export class ContractApiService {
     const formData = new FormData();
     formData.append("orderId", params.orderId);
     formData.append("amount", String(params.amount));
-    formData.append("usagePeriod", String(params.usagePeriod));
     formData.append("usageStartTime", params.usageStartTime);
     formData.append("usageEndTime", params.usageEndTime);
     formData.append("fileId", String(params.fileId));
