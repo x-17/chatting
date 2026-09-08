@@ -3,7 +3,7 @@
 //TODO:尚未完善定义
 //export type OrderType = 'purchase' | 'sale';
 
-export type OrderStatus = 1 | 2 | 3 | 4; // 1 - _磋商成功, 2 - _磋商失败, 3 - _交付成功, 4 - _待磋商
+export type OrderStatus = 1 | 2 | 3 | 4 | 5; // 1 - 磋商成功, 2 - 磋商失败, 3 - 交付成功, 4 - 待磋商, 5 - 存在异议
 
 export interface OrderParticipant {
   id: number;

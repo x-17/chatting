@@ -14,6 +14,14 @@
             </el-icon>
           </el-button>
         </el-badge>
+        <el-button
+          text
+          :icon="DataAnalysis"
+          title="统计查询"
+          @click="router.push({ name: 'OrderStatistics' })"
+        >
+          统计查询
+        </el-button>
         <el-badge :value="totalUnreadCount" :hidden="totalUnreadCount === 0">
           <el-button text>
             <el-icon>
@@ -221,6 +229,7 @@ import {
   DArrowLeft,
   DArrowRight,
   Connection,
+  DataAnalysis,
 } from "@element-plus/icons-vue";
 import TransactionGraph from "../components/TransactionGraph.vue";
 import OrderList from "../components/OrderList.vue";

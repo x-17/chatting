@@ -67,6 +67,12 @@ const contractRoutes = [
     component: () => import("../modulse/chat/views/ContractSigningView.vue"),
     meta: { requiresAuth: true },
   },
+  {
+    path: "/order-statistics",
+    name: "OrderStatistics",
+    component: () => import("../modulse/chat/views/OrderStatisticsView.vue"),
+    meta: { requiresAuth: true, title: "订单统计查询" },
+  },
 ];
 
 const router = createRouter({
@@ -172,6 +178,7 @@ router.afterEach((to) => {
     ChatMain: "订单磋商",
     ContractList: "合同列表",
     ContractSigning: "合同签署",
+    OrderStatistics: "订单统计查询",
     Login: "登录",
   };
 

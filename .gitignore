@@ -22,3 +22,14 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Codex-generated temporary scripts and document/render artifacts
+/*.py
+/*.docx
+/*.pdf
+/*.png
+/.codex-docx-*/
+/.docx-*/
+/.lo-profile-*/
+/template-style-evidence.json
+/stats_dump.txt
