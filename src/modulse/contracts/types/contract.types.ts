@@ -123,6 +123,7 @@ export interface UploadOrderQuoteRequest {
   amount: number;
   usageStartTime: string; // yyyy-MM-dd HH:mm:ss
   usageEndTime: string; // yyyy-MM-dd HH:mm:ss
+  deliveryMethod: "online" | "usb" | "hard_disk";
   fileId: number;
   signature: string;
 }

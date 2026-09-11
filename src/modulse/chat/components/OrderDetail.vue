@@ -134,7 +134,7 @@
       <div class="detail-actions">
         <el-alert
           v-if="canCreateContract && !hasFirstSignPriority"
-          title="您的信誉度不足，只能等待对方发起签署"
+          :title="firstSignPriorityMessage"
           type="warning"
           :closable="false"
           show-icon
@@ -350,15 +350,24 @@ const myReputationScore = computed(
 const otherPartyReputationScore = computed(
   () => props.order.otherParty.reputationScore ?? 100,
 );
+const firstSignPriorityMessage = computed(() =>
+  myReputationScore.value === otherPartyReputationScore.value
+    ? "双方信誉分相同，应由买方先发起签署"
+    : "您的信誉分高于对方，只能等待对方发起签署",
+);
 const hasFirstSignPriority = computed(() => {
   if (props.order.conversationType !== "p2p") return true;
-  return myReputationScore.value >= otherPartyReputationScore.value;
+  return (
+    myReputationScore.value < otherPartyReputationScore.value ||
+    (myReputationScore.value === otherPartyReputationScore.value &&
+      props.order.type === "purchase")
+  );
 });
 
 function handleCreateContract() {
   if (!hasFirstSignPriority.value) {
     ElMessage.warning(
-      `您的信誉度不足，只能等待对方发起签署（您的信誉分：${myReputationScore.value}，对方信誉分：${otherPartyReputationScore.value}）`,
+      `${firstSignPriorityMessage.value}（您的信誉分：${myReputationScore.value}，对方信誉分：${otherPartyReputationScore.value}）`,
     );
     return;
   }

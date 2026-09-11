@@ -21,6 +21,7 @@ export interface ContractDetails {
   amount: number;
   usageStartTime: Date;
   usageEndTime: Date;
+  deliveryMethod: "online" | "usb" | "hard_disk";
 }
 
 // 聊天状态
@@ -363,6 +364,7 @@ export function useChat() {
           fileName: file.name,
           fileSize: file.size,
           mimeType: file.type,
+          ...details,
         },
         __conversationType: order.conversationType,
       };
@@ -398,6 +400,7 @@ export function useChat() {
           amount: details.amount,
           usageStartTime: formatDate(details.usageStartTime),
           usageEndTime: formatDate(details.usageEndTime),
+          deliveryMethod: details.deliveryMethod,
           fileId,
           signature,
         });

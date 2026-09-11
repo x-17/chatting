@@ -155,6 +155,13 @@
             style="width: 100%"
           />
         </el-form-item>
+        <el-form-item label="交付方式" prop="deliveryMethod">
+          <el-radio-group v-model="contractForm.deliveryMethod">
+            <el-radio label="online">线上交付</el-radio>
+            <el-radio label="usb">U盘交付</el-radio>
+            <el-radio label="hard_disk">硬盘交付</el-radio>
+          </el-radio-group>
+        </el-form-item>
       </el-form>
       <template #footer>
         <span class="dialog-footer">
@@ -389,9 +396,13 @@ function canCurrentUserStartSigning(): boolean {
 
   const myScore = authStore.user?.reputationScore ?? 100;
   const otherScore = order.otherParty.reputationScore ?? 100;
-  if (myScore < otherScore) {
+  if (myScore > otherScore || (myScore === otherScore && order.type !== "purchase")) {
+    const reason =
+      myScore === otherScore
+        ? "双方信誉分相同，应由买方先发起签署"
+        : "您的信誉分高于对方，只能等待对方发起签署";
     ElMessage.warning(
-      `您的信誉度不足，只能等待对方发起签署（您的信誉分：${myScore}，对方信誉分：${otherScore}）`,
+      `${reason}（您的信誉分：${myScore}，对方信誉分：${otherScore}）`,
     );
     return false;
   }
@@ -436,6 +447,7 @@ const contractForm = ref<ContractDetails>({
   amount: 0,
   usageStartTime: new Date(),
   usageEndTime: new Date(new Date().setFullYear(new Date().getFullYear() + 1)),
+  deliveryMethod: "online",
 });
 
 const isValidDate = (value: unknown): value is Date =>
@@ -496,6 +508,13 @@ const contractFormRules: FormRules<ContractDetails> = {
           callback();
         }
       },
+      trigger: "change",
+    },
+  ],
+  deliveryMethod: [
+    {
+      required: true,
+      message: "请选择交付方式",
       trigger: "change",
     },
   ],

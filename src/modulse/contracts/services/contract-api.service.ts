@@ -188,6 +188,7 @@ export class ContractApiService {
     formData.append("amount", String(params.amount));
     formData.append("usageStartTime", params.usageStartTime);
     formData.append("usageEndTime", params.usageEndTime);
+    formData.append("deliveryMethod", params.deliveryMethod);
     formData.append("fileId", String(params.fileId));
     formData.append("signature", params.signature);
 
