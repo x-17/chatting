@@ -16,17 +16,12 @@ import type { StorableIdentity, PublicKeyBundle } from "../types";
 import { get as idbGet, set as idbSet, createStore } from "idb-keyval";
 import { getKeyBundleForUser } from "./users.api.ts";
 import { createAuthenticatedApiClient } from "../../utils/api-client";
+import { sha256Hex } from "../../utils/sha256";
 
 // 创建用于存储身份的 IndexedDB store
 const identityDbStore = createStore("e2ee-identity-store", "identities");
 
-async function sha256Hex(value: string): Promise<string> {
-  const bytes = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
+
 
 // ========== 新增：简单的异步锁 ==========
 class AsyncLock {

@@ -1,5 +1,6 @@
 // contracts/services/contract.service.ts
 
+import { sha256Hex } from "../../utils/sha256";
 import { e2eeService } from "../../signal/services/e2ee.service";
 import { ContractApiService } from "./contract-api.service";
 import { ContractPersistenceService } from "./contract-persistence.service";
@@ -218,9 +219,7 @@ export class ContractService {
   }
 
   private async calculateFileHash(content: ArrayBuffer): Promise<string> {
-    const hashBuffer = await crypto.subtle.digest("SHA-256", content);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+    return sha256Hex(content);
   }
 
   private async downloadContractFile(contract: Contract): Promise<ArrayBuffer> {
