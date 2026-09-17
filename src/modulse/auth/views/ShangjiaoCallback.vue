@@ -29,15 +29,12 @@
         <div class="login-content">
           <div class="login-info">
             <h3>上交统一身份认证</h3>
-            <p class="login-description" v-if="!isInitiated && !hasError">
-              系统检测到您已通过上交身份验证，请点击下方“确认登录”按钮进入安全磋商系统。
-            </p>
-            <p class="login-description" v-else-if="isLoading && !hasError">
+            <p class="login-description" v-if="isLoading && !hasError">
               正在处理来自上交统一身份认证的登录请求。
               验证成功后将自动为您建立端到端加密通信环境。
             </p>
             <p class="login-description" v-else-if="hasError">
-              登录校验遇到问题。您可选择重新验证。
+              登录校验遇到问题。您可选择重新尝试。
             </p>
           </div>
 
@@ -67,39 +64,16 @@
             </div>
           </div>
 
-          <!-- 操作按钮 -->
-          <div class="login-actions">
-            <!-- 初始点击登录 -->
+          <!-- 操作按钮：仅在出错时展示，正常流程自动登录 -->
+          <div class="login-actions" v-if="hasError">
             <el-button
-              v-if="!isInitiated && !hasError"
               type="primary"
               size="large"
-              @click="confirmLogin"
+              @click="retryLogin"
               class="login-button"
             >
-              确认登录
+              重新尝试
             </el-button>
-
-            <!-- 出错时展示的重试和返回 -->
-            <template v-if="hasError">
-              <el-button
-                type="primary"
-                size="large"
-                @click="retryLogin"
-                class="login-button"
-              >
-                重新尝试验证
-              </el-button>
-              <!-- <el-button
-                size="large"
-                type="default"
-                @click="goToMainLogin"
-                class="retry-button"
-                style="margin-left: 0"
-              >
-                返回普通登录
-              </el-button> -->
-            </template>
           </div>
         </div>
       </el-card>
@@ -125,10 +99,41 @@ const router = useRouter();
 const authStore = useAuthStore();
 const orderApi = new OrderApiService();
 
-const isInitiated = ref(false);
+// 记录本机已消费过的上交 ticket。门户 F5 后 URL 里仍是同一张已失效的旧票，
+// 靠这个标记跳过换取 token，直接复用已建立的会话，避免拿废票反复请求。
+// 存列表而不是单值：用户可能开多个标签页各自发起交易，单值会被互相覆盖。
+const CONSUMED_TICKET_KEY = "sj_consumed_ticket";
+const CONSUMED_TICKET_LIMIT = 5;
+
+const readConsumedTickets = (): string[] => {
+  try {
+    const raw = localStorage.getItem(CONSUMED_TICKET_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    // 存储被写坏时按「没记录过」处理，走正常登录路径
+    return [];
+  }
+};
+
+const markTicketConsumed = (ticket: string) => {
+  const tickets = readConsumedTickets().filter((item) => item !== ticket);
+  tickets.push(ticket);
+  localStorage.setItem(
+    CONSUMED_TICKET_KEY,
+    JSON.stringify(tickets.slice(-CONSUMED_TICKET_LIMIT)),
+  );
+};
+
 const isLoading = ref(false);
 const hasError = ref(false);
 const currentStep = ref("verifying"); // verifying, keygen, order, success, error
+// loginByTicket 是否已被服务端接受。一旦接受，这张一次性 ticket 就已核销，
+// 即使后续步骤（密钥注册、建单）失败，也不能再拿它重新换取 token。
+const ticketAccepted = ref(false);
+// 当前这一轮走的是哪条路：用 ticket 换 token，还是复用已有会话。
+// 失败时据此决定提示文案（票据被拒 vs 会话/密钥问题）。
+const activeFlow = ref<"ticket" | "session">("ticket");
 
 // 错误提示状态
 const errorAlert = ref({
@@ -145,18 +150,40 @@ watch(
     if (newStatus === "loading") {
       currentStep.value = "verifying";
     } else if (newStatus === "settingUp") {
+      // 走到这里说明 loginByTicket 已返回 code=0 + tenantId，票已被核销
+      ticketAccepted.value = true;
       currentStep.value = "keygen";
     } else if (newStatus === "success") {
+      // code=1，票已被核销
+      ticketAccepted.value = true;
       currentStep.value = "order";
     } else if (newStatus === "error") {
       currentStep.value = "error";
       hasError.value = true;
       isLoading.value = false;
-      showErrorAlert(
-        "error",
-        "登录失败",
-        authStore.errorMessage || "安全验证失败，请稍后重试",
-      );
+
+      const raw = authStore.errorMessage || "";
+      // 原始信息多半是后端嵌套的错误字符串，对用户没有意义，留在控制台
+      console.error("[ShangjiaoCallback] 登录失败，原始信息：", raw);
+
+      if (activeFlow.value === "session") {
+        // 复用会话失败（如密钥指纹不匹配），store 给出的原因更具体，原样透出
+        showErrorAlert(
+          "error",
+          "登录失败",
+          raw || "本地登录状态已失效，请返回交易系统重新发起交易。",
+        );
+      } else if (!ticketAccepted.value) {
+        // 票在换取 token 这一步就被拒了
+        showErrorAlert(
+          "error",
+          "登录失败",
+          "当前登录凭证无效或已失效，请返回交易系统重新发起交易。",
+        );
+      } else {
+        // 票没问题，是后续的密钥注册/校验出的问题
+        showErrorAlert("error", "登录失败", raw || "安全验证失败，请稍后重试");
+      }
     }
   },
 );
@@ -178,8 +205,21 @@ const loadingText = computed(() => {
 });
 
 onMounted(() => {
-  // 只在挂载时做参数预检，但不自动触发登录
   validateParams();
+  if (hasError.value) {
+    return;
+  }
+
+  const ticket = route.query.ticket as string;
+
+  // 门户 F5 或重复设置 iframe src 时，URL 里还是同一张已失效的旧票。
+  // 这时不重新换取 token，直接复用本机已建立的会话。
+  if (readConsumedTickets().includes(ticket)) {
+    resumeExistingSession();
+    return;
+  }
+
+  startTicketLoginFlow();
 });
 
 const validateParams = () => {
@@ -196,12 +236,39 @@ const validateParams = () => {
   }
 };
 
-const confirmLogin = () => {
-  isInitiated.value = true;
-  startTicketLoginFlow();
+/**
+ * 票据已消费情况下（门户刷新、iframe 重建）的快速通道。
+ * 不调用 loginByTicket，只用本机保存的会话来继续进入磋商。
+ */
+const resumeExistingSession = async () => {
+  activeFlow.value = "session";
+  isLoading.value = true;
+  hasError.value = false;
+  errorAlert.value.show = false;
+
+  await authStore.initializeAuth();
+
+  if (!authStore.isAuthenticated) {
+    isLoading.value = false;
+    hasError.value = true;
+    currentStep.value = "error";
+
+    // 密钥指纹不匹配这类失败，store 已经通过 watch 给出了更具体的原因，不覆盖它
+    if (authStore.status !== "error") {
+      showErrorAlert(
+        "warning",
+        "登录已过期",
+        "本地登录状态已失效，当前登录凭证无法再次使用。请返回交易系统重新发起交易。",
+      );
+    }
+    return;
+  }
+
+  await enterOrder();
 };
 
 const startTicketLoginFlow = async () => {
+  activeFlow.value = "ticket";
   authStore.reset();
   isLoading.value = true;
   hasError.value = false;
@@ -229,25 +296,82 @@ const startTicketLoginFlow = async () => {
       orderId,
       parentOrderId,
     );
+
+    // 票据已被服务端核销：无论后续成功与否都记下来，
+    // 免得下次刷新时再拿这张废票去请求。
+    if (ticketAccepted.value) {
+      markTicketConsumed(ticket);
+    }
+
     if (!loginSuccess) {
+      isLoading.value = false;
+      // 正常情况下 store 会把 status 置为 error，由 watch 负责弹出具体原因；
+      // 兜底处理 status 未变更的早退分支（如并发请求被拒），避免界面卡住无提示
+      if (authStore.status !== "error") {
+        hasError.value = true;
+        currentStep.value = "error";
+        showErrorAlert("error", "登录失败", "登录流程未完成，请重新尝试。");
+      }
       return;
     }
 
-    // 2. 登录成功后，创建订单
-    currentStep.value = "order";
-    const bssOrderId = Number(orderId);
-    const bssParentOrderId = parentOrderId ? Number(parentOrderId) : undefined;
+    // 2. 登录成功，创建订单并进入聊天页
+    await enterOrder();
+  } catch (err: any) {
+    isLoading.value = false;
+    hasError.value = true;
+    currentStep.value = "error";
+    showErrorAlert(
+      "error",
+      "初始化失败",
+      err?.message || "登录成功但订单磋商环境初始化失败，请重试。",
+    );
+  }
+};
 
-    if (isNaN(bssOrderId) || bssOrderId <= 0) {
-      throw new Error("无效的订单ID");
-    }
+/**
+ * 创建订单并跳转聊天页。登录成功后的主路径与「票据已消费」快速通道共用。
+ */
+const enterOrder = async () => {
+  const orderId = route.query.orderId as string;
+  const parentOrderId = route.query.parentOrderId as string;
 
+  currentStep.value = "order";
+  isLoading.value = true;
+  hasError.value = false;
+  errorAlert.value.show = false;
+
+  const bssOrderId = Number(orderId);
+  const bssParentOrderId = parentOrderId ? Number(parentOrderId) : undefined;
+
+  if (isNaN(bssOrderId) || bssOrderId <= 0) {
+    isLoading.value = false;
+    hasError.value = true;
+    showErrorAlert(
+      "error",
+      "订单参数错误",
+      "无效的订单 ID，请返回交易系统重新发起交易。",
+    );
+    return;
+  }
+
+  try {
     const res = await orderApi.createOrder(bssOrderId, bssParentOrderId);
-    if (res.code === 0) {
-      ElMessage.success("进入磋商订单成功");
-    } else {
-      ElMessage.error(res.msg);
+
+    // 建单失败就不能进聊天页：/chat 依赖这里创建出来的订单
+    if (res.code !== 0) {
+      isLoading.value = false;
+      hasError.value = true;
+      currentStep.value = "error";
+      showErrorAlert(
+        "error",
+        "订单初始化失败",
+        res.msg || "无法进入磋商订单，请稍后重试。",
+      );
+      return;
     }
+
+    ElMessage.success("进入磋商订单成功");
     currentStep.value = "success";
 
     // 3. 进入聊天页面
@@ -262,17 +386,30 @@ const startTicketLoginFlow = async () => {
     showErrorAlert(
       "error",
       "初始化失败",
-      err?.message || "登录成功但订单磋商环境初始化失败，请重试。",
+      err?.message || "订单磋商环境初始化失败，请重试。",
     );
   }
 };
 
-const retryLogin = () => {
-  confirmLogin();
-};
+const retryLogin = async () => {
+  hasError.value = false;
+  errorAlert.value.show = false;
 
-const goToMainLogin = () => {
-  router.push("/login");
+  // 登录其实已经成功，只是建单/跳转那一步失败 —— 不必重新换取 token
+  if (authStore.isAuthenticated) {
+    await enterOrder();
+    return;
+  }
+
+  // 票已被核销（含换取 token 成功但后续步骤失败的情况），
+  // 再拿它去请求只会被拒，改走会话恢复。
+  const ticket = route.query.ticket as string;
+  if (readConsumedTickets().includes(ticket)) {
+    await resumeExistingSession();
+    return;
+  }
+
+  await startTicketLoginFlow();
 };
 
 const showErrorAlert = (

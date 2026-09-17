@@ -4,7 +4,7 @@
     <!-- 顶部导航栏 -->
     <div class="top-navbar">
       <div class="navbar-left">
-        <h2>订单磋商</h2>
+        <h2>安全磋商</h2>
       </div>
       <div class="navbar-right">
         <el-badge>

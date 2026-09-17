@@ -377,7 +377,16 @@ export const useAuthStore = defineStore("auth", {
           return await this.handleNewUser(response.data);
         }
 
-        throw new Error(response.msg || "未知的认证响应");
+        // code=0 且没有 tenantId，说明 ticket 本身被拒（不存在 / 已使用 / 已过期）。
+        // 后端把具体原因放在 data 里，通常是一段字符串，一并带上便于排查。
+        throw new Error(
+          [
+            response.msg,
+            typeof response.data === "string" ? response.data : "",
+          ]
+            .filter(Boolean)
+            .join(" | ") || "登录凭证无效",
+        );
       } catch (error: any) {
         return this.handleAuthError(error);
       } finally {
