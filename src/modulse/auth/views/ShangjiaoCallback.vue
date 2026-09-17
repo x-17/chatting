@@ -204,13 +204,33 @@ const loadingText = computed(() => {
   }
 });
 
+// 辅助函数：从route.query或URL hash手动解析参数（兼容不同门户的参数传递方式）
+const getQueryParam = (key: string): string | undefined => {
+  // 优先从 route.query 读取
+  const fromRoute = route.query[key];
+  if (fromRoute) {
+    return Array.isArray(fromRoute) ? fromRoute[0] : String(fromRoute);
+  }
+  
+  // 如果 route.query 读不到，从原始 hash 手动解析
+  const hash = window.location.hash;
+  const queryStart = hash.indexOf('?');
+  if (queryStart !== -1) {
+    const queryString = hash.substring(queryStart + 1);
+    const urlParams = new URLSearchParams(queryString);
+    return urlParams.get(key) || undefined;
+  }
+  
+  return undefined;
+};
+
 onMounted(() => {
   validateParams();
   if (hasError.value) {
     return;
   }
 
-  const ticket = route.query.ticket as string;
+  const ticket = getQueryParam('ticket') as string;
 
   // 门户 F5 或重复设置 iframe src 时，URL 里还是同一张已失效的旧票。
   // 这时不重新换取 token，直接复用本机已建立的会话。
@@ -223,8 +243,8 @@ onMounted(() => {
 });
 
 const validateParams = () => {
-  const ticket = route.query.ticket as string;
-  const orderId = route.query.orderId as string;
+  const ticket = getQueryParam('ticket');
+  const orderId = getQueryParam('orderId');
 
   if (!ticket || !orderId) {
     hasError.value = true;
@@ -274,9 +294,9 @@ const startTicketLoginFlow = async () => {
   hasError.value = false;
   errorAlert.value.show = false;
 
-  const ticket = route.query.ticket as string;
-  const orderId = route.query.orderId as string;
-  const parentOrderId = route.query.parentOrderId as string;
+  const ticket = getQueryParam('ticket') as string;
+  const orderId = getQueryParam('orderId') as string;
+  const parentOrderId = getQueryParam('parentOrderId') as string;
 
   if (!ticket || !orderId) {
     isLoading.value = false;
@@ -333,8 +353,8 @@ const startTicketLoginFlow = async () => {
  * 创建订单并跳转聊天页。登录成功后的主路径与「票据已消费」快速通道共用。
  */
 const enterOrder = async () => {
-  const orderId = route.query.orderId as string;
-  const parentOrderId = route.query.parentOrderId as string;
+  const orderId = getQueryParam('orderId') as string;
+  const parentOrderId = getQueryParam('parentOrderId') as string;
 
   currentStep.value = "order";
   isLoading.value = true;
@@ -403,7 +423,7 @@ const retryLogin = async () => {
 
   // 票已被核销（含换取 token 成功但后续步骤失败的情况），
   // 再拿它去请求只会被拒，改走会话恢复。
-  const ticket = route.query.ticket as string;
+  const ticket = getQueryParam('ticket') as string;
   if (readConsumedTickets().includes(ticket)) {
     await resumeExistingSession();
     return;
