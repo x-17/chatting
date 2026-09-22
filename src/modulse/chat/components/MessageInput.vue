@@ -103,6 +103,11 @@ import {
   Loading,
 } from "@element-plus/icons-vue";
 import type { Order } from "../types/chat.types";
+// 上传上限（含加密膨胀/ multipart 余量）统一由加密服务提供，避免各处写死不一致
+import {
+  MAX_FILE_SIZE,
+  MAX_UPLOAD_MB,
+} from "../../utils/file-encryption.service";
 
 interface Props {
   order: Order;
@@ -168,10 +173,9 @@ function handleEmojiPicker() {
 }
 
 function handleFileSelect(file: File) {
-  // 检查文件大小（100MB限制）
-  const maxSize = 100 * 1024 * 1024;
-  if (file.size > maxSize) {
-    ElMessage.error("文件大小不能超过 100MB");
+  // 检查文件大小（对齐协商后端 1MB 上限，详见 file-encryption.service.ts）
+  if (file.size > MAX_FILE_SIZE) {
+    ElMessage.error(`文件大小不能超过 ${MAX_UPLOAD_MB}MB`);
     return false;
   }
 
@@ -179,10 +183,9 @@ function handleFileSelect(file: File) {
   return false; // 阻止默认上传
 }
 function handleContractSelect(file: File) {
-  // 检查文件大小（100MB限制）
-  const maxSize = 100 * 1024 * 1024;
-  if (file.size > maxSize) {
-    ElMessage.error("文件大小不能超过 100MB");
+  // 检查文件大小（对齐协商后端 1MB 上限，详见 file-encryption.service.ts）
+  if (file.size > MAX_FILE_SIZE) {
+    ElMessage.error(`文件大小不能超过 ${MAX_UPLOAD_MB}MB`);
     return false;
   }
 

@@ -43,7 +43,20 @@ export interface FileDecryptionResult {
 }
 
 const CHUNK_SIZE = 64 * 1024;
-const MAX_FILE_SIZE = 100 * 1024 * 1024;
+
+/**
+ * 上传上限对齐（2026-09-22 线上实测）：
+ *  - 协商后端（chat 服务）未配置 spring.servlet.multipart.*，走 Spring 默认「单文件 1MB」
+ *  - nginx 9007 未配置 client_max_body_size，走默认 1m（作用于整个 multipart 请求体）
+ *  - 上传内容是分块 AES-GCM 密文（每 64KB 明文 + 16 字节认证标签），外面再包一层 multipart
+ * 因此明文上限 = 1MB - 1KB 余量。
+ * 这里是所有上传入口（P2P 文件 / 群聊文件 / 合同 PDF）共用的唯一上限来源；
+ * 若后端放宽（需改 chat 容器内 application.properties + nginx 9007 并重启 chat-container），
+ * 同步调整 MAX_UPLOAD_MB 即可。
+ */
+export const MAX_UPLOAD_MB = 1;
+export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+export const MAX_FILE_SIZE = MAX_UPLOAD_BYTES - 1024;
 
 /**
  * 文件端到端加密服务（P2P和群聊逻辑相同，接口分离）
@@ -59,7 +72,7 @@ export const fileEncryptionService = {
         onProgress?: (progress: FileUploadProgress) => void
     ): Promise<EncryptedFilePackage> {
         if (file.size > MAX_FILE_SIZE) {
-            throw new Error(`文件大小超过限制 (${MAX_FILE_SIZE / 1024 / 1024}MB)`);
+            throw new Error(`文件大小超过限制 (${MAX_UPLOAD_MB}MB，协商后端单文件上传上限)`);
         }
 
         const fileId = this.generateFileId();
@@ -121,7 +134,7 @@ export const fileEncryptionService = {
         onProgress?: (progress: FileUploadProgress) => void
     ): Promise<EncryptedFilePackage> {
         if (file.size > MAX_FILE_SIZE) {
-            throw new Error(`文件大小超过限制 (${MAX_FILE_SIZE / 1024 / 1024}MB)`);
+            throw new Error(`文件大小超过限制 (${MAX_UPLOAD_MB}MB，协商后端单文件上传上限)`);
         }
 
         const fileId = this.generateFileId();
