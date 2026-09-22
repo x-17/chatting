@@ -46,15 +46,16 @@ const CHUNK_SIZE = 64 * 1024;
 
 /**
  * 上传上限对齐（2026-09-22 线上实测）：
- *  - 协商后端（chat 服务）未配置 spring.servlet.multipart.*，走 Spring 默认「单文件 1MB」
- *  - nginx 9007 未配置 client_max_body_size，走默认 1m（作用于整个 multipart 请求体）
+ *  - chat 后端：容器内外部配置 /app/config/application.properties 设为
+ *    spring.servlet.multipart.max-file-size=200MB / max-request-size=210MB
+ *  - nginx 9007 ssl 站点：client_max_body_size 200M（作用于整个 multipart 请求体）
  *  - 上传内容是分块 AES-GCM 密文（每 64KB 明文 + 16 字节认证标签），外面再包一层 multipart
- * 因此明文上限 = 1MB - 1KB 余量。
- * 这里是所有上传入口（P2P 文件 / 群聊文件 / 合同 PDF）共用的唯一上限来源；
- * 若后端放宽（需改 chat 容器内 application.properties + nginx 9007 并重启 chat-container），
- * 同步调整 MAX_UPLOAD_MB 即可。
+ * 因此明文上限 = 200MB - 1KB 余量。
+ * 实测：1100KB / 5MB / 20MB 上传成功；210MB 被 nginx 以 413 拒绝（上限真实生效，非取消限制）。
+ * 这里是所有上传入口（P2P 文件 / 群聊文件 / 合同 PDF）共用的唯一上限来源。
+ * 注意：容器内配置无挂载，容器重建后需重新写入（见《项目运行与部署基线.md》§5.1.2）。
  */
-export const MAX_UPLOAD_MB = 1;
+export const MAX_UPLOAD_MB = 200;
 export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 export const MAX_FILE_SIZE = MAX_UPLOAD_BYTES - 1024;
 
