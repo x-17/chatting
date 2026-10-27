@@ -177,6 +177,51 @@
       </template>
     </el-dialog>
 
+    <!-- 跨订单待签合同恢复弹窗：聊天消息丢失后仍能定位并处理 -->
+    <el-dialog
+      v-model="pendingContractsVisible"
+      title="您还有待签合同"
+      width="620px"
+    >
+      <el-alert
+        type="warning"
+        :closable="false"
+        title="跨订单待签锁"
+        description="存在未完成的待签合同时，无法发起或签署新合同。请先到对应订单完成签署或拒签（聊天记录被清理也不影响处理）。"
+      />
+      <el-table
+        v-if="pendingContracts.length"
+        :data="pendingContracts"
+        size="small"
+        style="margin-top: 12px"
+      >
+        <el-table-column prop="orderId" label="订单号" min-width="200" />
+        <el-table-column label="当前状态" width="140">
+          <template #default="{ row }">
+            {{
+              String(row.lastSignUserId) === String(myUserId)
+                ? "等待对方签署"
+                : "等待您签署"
+            }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="100">
+          <template #default="{ row }">
+            <el-button type="primary" link @click="goPendingOrder(row.orderId)">
+              去处理
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty
+        v-else
+        description="没有扫描到其他待签合同（可能刚被对方处理）"
+      />
+      <template #footer>
+        <el-button @click="pendingContractsVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 文件预览弹窗 -->
     <el-dialog
       v-model="previewVisible"
@@ -278,6 +323,7 @@ const {
 } = useOrderList();
 
 import { useOrderStore } from "../../orders/store/order.store";
+import { ContractService } from "../../contracts/services/contract.service";
 const orderStore = useOrderStore();
 
 // 初始化消息处理器，传入 activeOrderId 以便在当前会话时不增加未读数
@@ -559,10 +605,73 @@ async function submitContract() {
     ElMessage.success("合同文件发送成功");
     contractFormVisible.value = false;
   } catch (error: any) {
-    ElMessage.error(error.message || "合同文件发送失败");
+    const message = String(error?.message || "合同文件发送失败");
+    ElMessage.error(message);
+    // 被跨订单待签锁拦截时，扫描并列出真正卡住的那份合同，
+    // 避免用户只看到一句“请等待”却不知道是哪一单。
+    if (message.includes("待对方签署") || message.includes("待签")) {
+      scanPendingContracts();
+    }
   } finally {
     contractSubmitting.value = false;
   }
+}
+
+// ---------- 跨订单待签合同恢复 ----------
+const pendingContractsVisible = ref(false);
+const pendingScanning = ref(false);
+const pendingContracts = ref<
+  Array<{
+    orderId: string;
+    fileId: number;
+    lastSignUserId: number;
+    status: number;
+  }>
+>([]);
+const myUserId = computed(
+  () => sessionStorage.getItem("auth_current_user_id") || "",
+);
+
+async function scanPendingContracts() {
+  if (pendingScanning.value) return;
+  pendingScanning.value = true;
+  try {
+    const service = new ContractService(String(myUserId.value));
+    // orderStore 里是原始订单（含 flag），chat 展示层没有 flag 字段
+    const candidates = orderStore.orderList.filter(
+      (order) => order.flag === 4 || order.flag === 5,
+    );
+    const found: typeof pendingContracts.value = [];
+    for (const order of candidates.slice(0, 30)) {
+      try {
+        const res = await service.queryOrderSignState(order.orderId);
+        if (
+          res?.code === 1 &&
+          typeof res.data !== "string" &&
+          res.data?.status === 0
+        ) {
+          found.push({
+            orderId: order.orderId,
+            fileId: res.data.fileId,
+            lastSignUserId: res.data.lastSignUserId,
+            status: res.data.status,
+          });
+        }
+      } catch (error) {
+        // 单个订单查询失败不影响其它订单
+        console.warn("[ChatMain] query pending contract failed", order.orderId, error);
+      }
+    }
+    pendingContracts.value = found;
+    pendingContractsVisible.value = true;
+  } finally {
+    pendingScanning.value = false;
+  }
+}
+
+async function goPendingOrder(orderId: string) {
+  pendingContractsVisible.value = false;
+  await handleOrderSelect(orderId);
 }
 
 function handleIsAgreeContract(isAgree: boolean, message: any) {

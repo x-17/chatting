@@ -19,7 +19,7 @@
         </div>
       </div>
       <div class="header-right">
-        <el-badge :value="contractNum" class="item">
+        <el-badge :value="contractNum" :hidden="contractNum === 0" class="item">
           <el-button text @click="handleShowContracts">
             <el-icon>
               <Document />
@@ -28,6 +28,24 @@
           </el-button>
         </el-badge>
       </div>
+    </div>
+
+    <!-- 待签合同提示：不依赖聊天消息，聊天记录/会话重置后依然可见 -->
+    <div v-if="contractInfo && contractInfo.status === 0" class="pending-contract-banner">
+      <el-icon color="#E6A23C" :size="16">
+        <WarningFilled />
+      </el-icon>
+      <span class="pending-contract-text">
+        {{
+          isContractInitiator
+            ? "您发起的合同正在等待对方签署"
+            : "对方已发起合同，等待您签署"
+        }}
+        <template v-if="contractFileName">：{{ contractFileName }}</template>
+      </span>
+      <el-button type="primary" link @click="openContractDialog">
+        查看并处理
+      </el-button>
     </div>
 
     <!-- 消息列表 -->
@@ -116,7 +134,12 @@ import {
   reactive,
   onBeforeUpdate,
 } from "vue";
-import { Document, Loading, ArrowDown } from "@element-plus/icons-vue";
+import {
+  Document,
+  Loading,
+  ArrowDown,
+  WarningFilled,
+} from "@element-plus/icons-vue";
 import { useAuthStore } from "../../auth/services/auth.store";
 import MessageBubble from "./MessageBubble.vue";
 import FileMessage from "./FileMessage.vue";
@@ -154,6 +177,7 @@ const showScrollToBottom = ref(false);
 const contractNum = ref(0);
 // const contractInfo = ref<orderSignState>(null);
 const contractInfo = ref<orderSignState>();
+const contractFileName = ref("");
 
 const currentUserId = computed(() =>
   String(
@@ -202,6 +226,11 @@ function getSenderName(message: ChatMessage): string {
   );
 }
 const isGroupChat = computed(() => props.order.conversationType === "group");
+const isContractInitiator = computed(
+  () =>
+    String(contractInfo.value?.lastSignUserId ?? "") ===
+    String(currentUserId.value),
+);
 const ContractServiceInstance = new ContractService(
   authStore.currentUserId ||
     sessionStorage.getItem("auth_current_user_id") ||
@@ -245,8 +274,12 @@ function scrollToBottom(smooth = true) {
 }
 
 function handleShowContracts() {
-  // TODO: 显示合同列表
+  // 弹窗打开时会触发 triggerQueryContract，向服务端刷新一次状态
   isContractDialogVisible.value = true;
+}
+
+function openContractDialog() {
+  handleShowContracts();
 }
 
 function handleDownloadFile(message: ChatMessage) {
@@ -262,23 +295,43 @@ async function handleContract(isAgree: boolean, message: ChatMessage) {
   console.log(isAgree);
   emit("is-agree-contract", isAgree, message);
 }
+async function loadContractFileName() {
+  const fileId = contractInfo.value?.fileId;
+  if (!fileId) {
+    contractFileName.value = "";
+    return;
+  }
+  try {
+    const api = new ContractApiService();
+    const name = await api.getFileDownloadName(String(fileId));
+    contractFileName.value = name || "";
+  } catch (error) {
+    console.warn("[MessageArea] 获取合同名称失败", error);
+    contractFileName.value = "";
+  }
+}
+
 async function querycontract() {
   try {
     let res = await ContractServiceInstance.queryOrderSignState(props.order.id);
-    if (res.code === 1) {
-      if (typeof res.data !== "string") {
+    if (res && res.code === 1) {
+      if (typeof res.data !== "string" && res.data) {
         contractInfo.value = res.data;
-        contractNum.value = 1;
+        // 徽标只提示“待签”，已完成的合同不再打扰用户
+        contractNum.value = res.data.status === 0 ? 1 : 0;
+        await loadContractFileName();
+        return;
       }
-    } else {
-      console.log(res.data);
-      contractInfo.value = null as orderSignState;
-      contractNum.value = 0;
-      // ElMessage.error(res.data as string);
     }
+    console.log(res?.data);
+    contractInfo.value = undefined;
+    contractFileName.value = "";
+    contractNum.value = 0;
   } catch (error) {
     console.log(error);
-    // ElMessage.error("查询合同状态失败");
+    contractInfo.value = undefined;
+    contractFileName.value = "";
+    contractNum.value = 0;
   }
 }
 watch(
@@ -286,7 +339,17 @@ watch(
   () => {
     querycontract();
   },
+  { immediate: true },
 );
+
+// 对方发起/更新合同时，即使消息无法解密，只要消息列表出现新的合同消息就向服务端刷新
+watch(
+  () => props.messages.filter((item) => item.type === "contract").length,
+  () => {
+    querycontract();
+  },
+);
+
 </script>
 
 <style scoped>
@@ -305,6 +368,25 @@ watch(
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.pending-contract-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  background: #fdf6ec;
+  border-bottom: 1px solid #faecd8;
+  color: #b88230;
+  font-size: 13px;
+}
+
+.pending-contract-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .header-left {

@@ -62,7 +62,7 @@
           </div>
 
           <!-- 签署操作区域 -->
-          <div class="sign-actions" v-if="contractState === 0 && !isMine" v-loading="contractLoading">
+          <div class="sign-actions" v-if="canSign" v-loading="contractLoading">
             <div class="sign-divider"></div>
             <div class="sign-buttons">
               <el-button type="success" plain size="small" class="sign-btn" @click="handleContract('agree')">
@@ -136,10 +136,28 @@ const authStore = useAuthStore();
 const downloading = ref(false);
 const contractLoading = ref(false);
 let contractState = ref<0 | 1 | 2>();
+// 以服务端签署记录为准：合同消息可能丢失/过旧，fileId 也可能已被新一次签署替换
+const serverFileId = ref<number | null>(null);
+const serverLastSignUserId = ref<number | null>(null);
 const contractService = new ContractService(
   authStore.currentUserId ||
   sessionStorage.getItem("auth_current_user_id") ||
   ""
+);
+
+const currentUserId = computed(() =>
+  String(
+    authStore.currentUserId ||
+      sessionStorage.getItem("auth_current_user_id") ||
+      ""
+  )
+);
+
+const canSign = computed(
+  () =>
+    contractState.value === 0 &&
+    serverLastSignUserId.value != null &&
+    String(serverLastSignUserId.value) !== currentUserId.value
 );
 
 function getInitial(value: unknown, fallback = "U"): string {
@@ -197,21 +215,35 @@ async function handleContract(params: string) {
   contractLoading.value = true;
   try {
     if (params === "agree") {
+      const fileId =
+        serverFileId.value ?? Number(props.message.metadata.fileId);
       const contract_res = await contractService.agreeOderSign(
         props.message.orderId!,
-        props.message.metadata.fileId
+        String(fileId)
       );
-      ElMessage.success(contract_res.data);
       if (contract_res.code === 1) {
+        ElMessage.success("签署成功");
         contractState.value = 1;
+      } else {
+        ElMessage.error(
+          typeof contract_res.data === "string"
+            ? contract_res.data
+            : contract_res.msg || "签署失败"
+        );
       }
     } else {
       const reject_res = await contractService.rejectOderSign(
         props.message.orderId
       );
-      ElMessage.success(reject_res.data);
       if (reject_res.code === 1) {
-        contractState.value = 1;
+        ElMessage.success("已拒绝该合同");
+        contractState.value = 2;
+      } else {
+        ElMessage.error(
+          typeof reject_res.data === "string"
+            ? reject_res.data
+            : reject_res.msg || "拒绝失败"
+        );
       }
     }
   } catch (error: any) {
@@ -229,12 +261,13 @@ onMounted(async () => {
         props.message.orderId
       );
       if (res.code === 1) {
-        if (typeof res.data !== "string" ) {
+        if (typeof res.data !== "string" && res.data) {
           contractState.value = res.data.status;
+          serverFileId.value = res.data.fileId ?? null;
+          serverLastSignUserId.value = res.data.lastSignUserId ?? null;
         }
-      }
-      else {
-        contractState.value = 2
+      } else {
+        contractState.value = 2;
       }
     } catch (error) {
       console.log(error);

@@ -406,7 +406,9 @@ export function useChat() {
         });
 
         if (contractRes.code !== 1) {
-          throw new Error(String(contractRes.data || "合同签署失败"));
+          throw new Error(
+            String(contractRes.data || contractRes.msg || "合同签署失败"),
+          );
         }
         console.log("Contract sign response:", contractRes.data);
       },
