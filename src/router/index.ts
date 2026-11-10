@@ -182,8 +182,9 @@ router.afterEach((to) => {
     Login: "登录",
   };
 
-  const title = titleMap[to.name as string] || "订单磋商系统";
-  document.title = title;
+  const systemTitle = "数据安全交易系统";
+  const pageTitle = titleMap[to.name as string];
+  document.title = pageTitle ? `${systemTitle} - ${pageTitle}` : systemTitle;
 
   // 滚动到顶部
   window.scrollTo(0, 0);

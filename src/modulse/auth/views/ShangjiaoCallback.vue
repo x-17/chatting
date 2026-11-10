@@ -21,7 +21,7 @@
               <div class="logo-icon">🔐</div>
               <span class="system-title">数据安全交易系统</span>
             </div>
-            <div class="subtitle">基于端到端加密的安全通信平台</div>
+            <div class="subtitle">基于端到端加密的交易协商</div>
           </div>
         </template>
 

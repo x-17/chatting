@@ -13,9 +13,9 @@
                     <div class="card-header">
                         <div class="logo-section">
                             <div class="logo-icon">🔐</div>
-                            <span class="system-title">安全磋商系统</span>
+                            <span class="system-title">数据安全交易系统</span>
                         </div>
-                        <div class="subtitle">端到端加密通信平台 - 账号登录</div>
+                        <div class="subtitle">账号登录</div>
                     </div>
                 </template>
 
