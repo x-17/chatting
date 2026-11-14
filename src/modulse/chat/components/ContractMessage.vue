@@ -62,14 +62,19 @@
           </div>
 
           <!-- 签署操作区域 -->
-          <div class="sign-actions" v-if="canSign" v-loading="contractLoading">
+          <div class="sign-actions" v-if="showSignActions" v-loading="contractLoading">
             <div class="sign-divider"></div>
             <div class="sign-buttons">
-              <el-button type="success" plain size="small" class="sign-btn" @click="handleContract('agree')">
-                同意签署
-              </el-button>
-              <el-button type="danger" plain size="small" class="sign-btn" @click="handleContract('refuse')">
-                拒绝签署
+              <template v-if="canSign">
+                <el-button type="success" plain size="small" class="sign-btn" @click="handleContract('agree')">
+                  同意签署
+                </el-button>
+                <el-button type="danger" plain size="small" class="sign-btn" @click="handleContract('refuse')">
+                  拒绝签署
+                </el-button>
+              </template>
+              <el-button v-else type="warning" plain size="small" class="sign-btn" @click="handleReSign">
+                再次签署
               </el-button>
             </div>
           </div>
@@ -153,12 +158,26 @@ const currentUserId = computed(() =>
   )
 );
 
+// 当前用户是否就是最后一位签署人（即本人已签、等待对方 / 双方均已签完）
+const iAmLastSigner = computed(
+  () =>
+    serverLastSignUserId.value != null &&
+    String(serverLastSignUserId.value) === currentUserId.value
+);
+
 const canSign = computed(
   () =>
     contractState.value === 0 &&
     serverLastSignUserId.value != null &&
-    String(serverLastSignUserId.value) !== currentUserId.value
+    !iAmLastSigner.value
 );
+
+// 已签署（待对方签）或已双签完成时，保留“再次签署”入口，用于触发重复签署拦截提示
+const canReSign = computed(
+  () => (contractState.value === 0 && iAmLastSigner.value) || contractState.value === 1
+);
+
+const showSignActions = computed(() => canSign.value || canReSign.value);
 
 function getInitial(value: unknown, fallback = "U"): string {
   const normalized = String(value ?? "").trim();
@@ -223,7 +242,7 @@ async function handleContract(params: string) {
       );
       if (contract_res.code === 1) {
         ElMessage.success("签署成功");
-        contractState.value = 1;
+        await refreshSignState();
       } else {
         ElMessage.error(
           typeof contract_res.data === "string"
@@ -254,26 +273,69 @@ async function handleContract(params: string) {
   }
 }
 
-onMounted(async () => {
-  if (props.message.type === "contract") {
-    try {
-      let res = await contractService.queryOrderSignState(
-        props.message.orderId
-      );
-      if (res.code === 1) {
-        if (typeof res.data !== "string" && res.data) {
-          contractState.value = res.data.status;
-          serverFileId.value = res.data.fileId ?? null;
-          serverLastSignUserId.value = res.data.lastSignUserId ?? null;
-        }
-      } else {
-        contractState.value = 2;
-      }
-    } catch (error) {
-      console.log(error);
-    }
+/**
+ * 已签署用户再次尝试签署：正常提交给后端，由服务端“请勿重复签署”校验拦截并提示。
+ * 例外：合同已完成且本人不是最后签署人时，后端没有“已完成”兜底校验，
+ * 直接请求会追加第三个签名，因此这种情况只在前端提示、不发起请求。
+ */
+async function handleReSign() {
+  if (contractLoading.value) return;
+
+  if (contractState.value === 1 && !iAmLastSigner.value) {
+    ElMessage.warning("该合同已完成双方签署，请勿重复签署");
+    return;
   }
-});
+
+  contractLoading.value = true;
+  try {
+    const fileId =
+      serverFileId.value ?? Number(props.message.metadata.fileId);
+    const contract_res = await contractService.agreeOderSign(
+      props.message.orderId!,
+      String(fileId)
+    );
+    if (contract_res.code === 1) {
+      ElMessage.success("签署成功");
+      await refreshSignState();
+    } else {
+      ElMessage.error(
+        typeof contract_res.data === "string"
+          ? contract_res.data
+          : contract_res.msg || "签署失败"
+      );
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.message || "签署失败");
+  } finally {
+    contractLoading.value = false;
+  }
+}
+
+/**
+ * 以服务端签署记录为准刷新卡片状态。合同消息可能过期（例如只签了首签、
+ * 本地却把状态显示成“已完成”），签名完成后统一用服务端状态回填。
+ */
+async function refreshSignState() {
+  if (props.message.type !== "contract") return;
+  try {
+    const res = await contractService.queryOrderSignState(
+      props.message.orderId
+    );
+    if (res.code === 1) {
+      if (typeof res.data !== "string" && res.data) {
+        contractState.value = res.data.status;
+        serverFileId.value = res.data.fileId ?? null;
+        serverLastSignUserId.value = res.data.lastSignUserId ?? null;
+      }
+    } else {
+      contractState.value = 2;
+    }
+  } catch (error) {
+    console.log(error);
+  }
+}
+
+onMounted(refreshSignState);
 </script>
 
 <style scoped>
